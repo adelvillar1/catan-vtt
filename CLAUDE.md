@@ -2,7 +2,9 @@
 
 > CATAN virtual tabletop — full-fidelity base-game rules kernel, cinematic 3D island table, WS multiplayer for 3–4 friends.
 > Sibling of `~/Projects/mahjong-vtt` and `~/Projects/dnd-vtt`. Same methodology, same architecture pattern.
-> Repo: https://github.com/adelvillar1/catan-vtt (not created yet)
+> Repo: https://github.com/adelvillar1/catan-vtt (public; owner handles security settings)
+
+**No Railway deployment yet** — user directive 2026-09-08: deploy only when the app matures. Local dev + GitHub is the whole topology for now.
 
 **Environment URLs and env var names live in `CLAUDE.local.md` (gitignored).** Secrets belong in `.env` / the host dashboard, never in tracked files.
 

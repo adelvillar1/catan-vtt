@@ -20,4 +20,20 @@ Hermes skill `catan-board-game` — especially `references/base-rules.md` (mecha
 
 | Op / action | Validator | Test | Status |
 |---|---|---|---|
-| _(to be filled as phase 1-10 of the plan land)_ | | | |
+| _(wave 1 — foundation: implementing now)_ | | | |
+| Rng determinism (int/pick/shuffle/snapshot/restore) | pure xorshift replay | rng.test.ts | 🔄 wave 1 |
+| Island topology (19 hexes, edge/vertex dedup, coastal flags) | buildIsland invariants | board.test.ts | 🔄 wave 1 |
+| Distance-rule free-vertex predicate | distanceRuleFree | board.test.ts | 🔄 wave 1 |
+| State schema validity (zod) | GameStateSchema + sub-schemas | state.test.ts | 🔄 wave 1 |
+| variableSetup(seed) — discs/ports/robber/bank/deck | setup invariants + swap-repair | setup.test.ts (10k-seed property) | 🔄 wave 1 |
+| _(waves 2+ — turn machine, trades, dev cards, bonus tiles, win, redaction)_ | | | ⏸ planned |
+| roll + production + robber-7 resolve | turn.ts validators | turn.test.ts | ⏸ wave 2 |
+| buildRoad/buildSettlement/buildCity | connectivity+caps+distance | actions.test.ts | ⏸ wave 2 |
+| tradeDomestic / tradeBank / tradePort | trade legality | actions.test.ts | ⏸ wave 3 |
+| buyDevCard / playDevCard (5 kinds) | deck+turn rules | actions.test.ts | ⏸ wave 3 |
+| bonus tiles (Longest Route ≥5, Largest Army ≥3, breakage) | recomputation on build | bonus.test.ts | ⏸ wave 4 |
+| claimVictory (≥10, own turn) | VP ledger | win.test.ts | ⏸ wave 4 |
+| redactForSeat | projection purity | redact.test.ts | ⏸ wave 5 |
+
+Legend: ✅ verified · 🔄 implementing · ⏸ planned · ❌ rejected-by-review
+
