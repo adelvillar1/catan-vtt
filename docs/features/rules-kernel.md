@@ -20,12 +20,14 @@ Hermes skill `catan-board-game` — especially `references/base-rules.md` (mecha
 
 | Op / action | Validator | Test | Status |
 |---|---|---|---|
-| _(wave 1 — foundation: implementing now)_ | | | |
-| Rng determinism (int/pick/shuffle/snapshot/restore) | pure xorshift replay | rng.test.ts | 🔄 wave 1 |
-| Island topology (19 hexes, edge/vertex dedup, coastal flags) | buildIsland invariants | board.test.ts | 🔄 wave 1 |
-| Distance-rule free-vertex predicate | distanceRuleFree | board.test.ts | 🔄 wave 1 |
-| State schema validity (zod) | GameStateSchema + sub-schemas | state.test.ts | 🔄 wave 1 |
-| variableSetup(seed) — discs/ports/robber/bank/deck | setup invariants + swap-repair | setup.test.ts (10k-seed property) | 🔄 wave 1 |
+| _(wave 1 — foundation: COMPLETE — 2-stage review PASS + fix round, 61 tests)_ | | | |
+| Rng determinism (int/pick/shuffle/snapshot/restore) | pure xorshift replay, RangeError guard | rng.test.ts (12) | ✅ |
+| Island topology (19 hexes, 54 vertices, 72 edges, vertex.adjacent) | exact-form √3 offsets | board.test.ts (18) | ✅ |
+| Distance-rule free-vertex predicate | O(deg) via vertex.adjacent | board.test.ts | ✅ |
+| State schema validity (zod) | GameStateSchema + sub-schemas, .strict() all levels | state.test.ts (15) | ✅ |
+| rngSeed/rngCursor restore contract (single continuous stream — dice MUST Rng.restore({seed:rngSeed,cursor:rngCursor}); reseed-per-attempt forbidden) | JSDoc-locked invariant | setup.test.ts (seeds 0..499; min cursor 85 verified over 10k) | ✅ |
+| variableSetup(seed) — spiral discs/ports/robber/bank/deck | setup invariants + port swap-repair | setup.test.ts (10k-seed property) | ✅ |
+| randomDiscSetup(seed) — red 6/8 separation | swap-repair, never adjacent reds | setup.test.ts (10k-seed property) | ✅ |
 | _(waves 2+ — turn machine, trades, dev cards, bonus tiles, win, redaction)_ | | | ⏸ planned |
 | roll + production + robber-7 resolve | turn.ts validators | turn.test.ts | ⏸ wave 2 |
 | buildRoad/buildSettlement/buildCity | connectivity+caps+distance | actions.test.ts | ⏸ wave 2 |
