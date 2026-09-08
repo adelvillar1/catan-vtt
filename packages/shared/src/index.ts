@@ -14,5 +14,6 @@ export * from "./road.js";
 export * from "./vp.js";
 export * from "./turn.js";
 export * from "./goldenReplay.js";
+export * from "./redact.js";
 
-export const KERNEL_VERSION = "0.4.0";
+export const KERNEL_VERSION = "0.5.0";
