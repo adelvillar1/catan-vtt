@@ -28,9 +28,17 @@ Hermes skill `catan-board-game` — especially `references/base-rules.md` (mecha
 | rngSeed/rngCursor restore contract (single continuous stream — dice MUST Rng.restore({seed:rngSeed,cursor:rngCursor}); reseed-per-attempt forbidden) | JSDoc-locked invariant | setup.test.ts (seeds 0..499; min cursor 85 verified over 10k) | ✅ |
 | variableSetup(seed) — spiral discs/ports/robber/bank/deck | setup invariants + port swap-repair | setup.test.ts (10k-seed property) | ✅ |
 | randomDiscSetup(seed) — red 6/8 separation | swap-repair, never adjacent reds | setup.test.ts (10k-seed property) | ✅ |
-| _(waves 2+ — turn machine, trades, dev cards, bonus tiles, win, redaction)_ | | | ⏸ planned |
-| roll + production + robber-7 resolve | turn.ts validators | turn.test.ts | ⏸ wave 2 |
-| buildRoad/buildSettlement/buildCity | connectivity+caps+distance | actions.test.ts | ⏸ wave 2 |
+| _(wave 2 — turn machine: COMPLETE — 2 reviews + fix batch + parent surgical fix; 110 tests)_ | | | |
+| Op schema (10 ops, ActionError code union, noOwnSettlementThere) | z.discriminatedUnion | actions.test.ts | ✅ |
+| roll + production + bank-exhaustion rules | restore({seed,cursor}) 2 draws | turn.test.ts | ✅ |
+| 7-resolve: discardQueue → moveRobber → stealCard | awaitingSeven window gates | turn.test.ts matrix | ✅ |
+| setup snake (round 1 + reversed round 2, 2nd settlement pays; anchor-only setup road; seat 0 starts) | placeSetupPiece | turn.test.ts | ✅ |
+| builds — road runs UP TO enemy settlement (legal), not THROUGH it (roadBlocked) | start-point rule, official | turn.test.ts gate test | ✅ |
+| playKnight + Largest Army award/transfer | strictly-greater, ties keep | turn.test.ts | ✅ |
+| Longest Route (≥5; ONLY opponent buildings break; own pass-through; 6-ring counts 6) | DFS longest trail | road.test.ts | ✅ |
+| endTurn rotation + gates (wrongPhase on ended) | hasRolled + resolved-seven | turn.test.ts | ✅ |
+| legalMoves UI enumeration | bidirectional conformance | turn.test.ts sweep | ✅ |
+| random-play sim (400 ops incl. knights, conservation, cursor monotonic) | integration heartbeat | turn.test.ts | ✅ |
 | tradeDomestic / tradeBank / tradePort | trade legality | actions.test.ts | ⏸ wave 3 |
 | buyDevCard / playDevCard (5 kinds) | deck+turn rules | actions.test.ts | ⏸ wave 3 |
 | bonus tiles (Longest Route ≥5, Largest Army ≥3, breakage) | recomputation on build | bonus.test.ts | ⏸ wave 4 |

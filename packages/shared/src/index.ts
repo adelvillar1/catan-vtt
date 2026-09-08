@@ -9,5 +9,8 @@ export * from "./rng.js";
 export * from "./board.js";
 export * from "./state.js";
 export * from "./setup.js";
+export * from "./actions.js";
+export * from "./road.js";
+export * from "./turn.js";
 
-export const KERNEL_VERSION = "0.1.0";
+export const KERNEL_VERSION = "0.2.0";

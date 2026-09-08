@@ -174,11 +174,40 @@ export type Building = z.infer<typeof BuildingSchema>;
 export const AwaitingSevenSchema = z
   .object({
     roller: z.number().int(),
+    /**
+     * true while at least one seat still owes a discardSeven op
+     * (discardQueue non-empty). false once all discards are done — and
+     * from the start for a knight activation (knights skip discards).
+     */
     pendingDiscard: z.boolean(),
+    /**
+     * true immediately after a roll of 7 or a knight-card activation —
+     * the robber move is mandatory and cannot be skipped.
+     */
+    mustMoveRobber: z.boolean(),
+    /**
+     * Seats still owing discard cards, in deterministic seat order.
+     * Each entry's count = how many cards that seat must discard.
+     * Only discardQueue[0].seat may discard next (discardSeven).
+     */
+    discardQueue: z.array(
+      z
+        .object({
+          seat: z.number().int(),
+          count: z.number().int().min(1),
+        })
+        .strict(),
+    ),
   })
   .strict();
 export type AwaitingSeven = z.infer<typeof AwaitingSevenSchema>;
 
+/**
+ * Root game-state schema.
+ *
+ * applyAction (turn.ts) is the ONLY legal mutator; consumers must treat
+ * GameState as immutable.
+ */
 export const GameStateSchema = z
   .object({
     config: GameConfigSchema,
