@@ -43,8 +43,8 @@ Single package `packages/shared`, zod 3.x, vitest. Phases, each committed when g
 
 - **Wave 1 (foundation) — DONE** `3465083`: rng/board/state/setup, 61 tests. Review: spec PASS / quality APPROVED + replay-blocker fix (single continuous RNG; `Rng.restore({rngSeed,rngCursor})` is the locked dice contract).
 - **Wave 2 (turn machine) — DONE** `468f63a`: actions/turn/road + AwaitingSeven extensions, 110 tests. Review caught 5 rules bugs, 3 of them authored by the PARENT brief (own-buildings breaking routes; seat-1 first turn; road blocked at enemy ENDPOINT — official: up-to is legal, only starting past is not; anchor-only setup roads; closed-ring undercount). All fixed + skill `references/setup.md` patched so the KB carries the correct rulings.
-- **Wave 3 (trades + dev cards) — IN FLIGHT**: domestic offer/accept, bank/port trades, buyDevCard + Monopoly/RoadBuilding/YearOfPlenty (+devBoughtLast bought-this-turn lock), greedy-bot golden replay harness.
-- Wave 4 (win detection + full golden to 10 VP) and wave 5 (redactForSeat) to follow; M2 (room server) gates on kernel ≥ AC1+AC2 green.
+- **Wave 3 (trades + dev cards) — DONE** `5a392bf`: maritime/port/domestic trades (offer/accept lifecycle, 7-freeze), buyDevCard + Monopoly/RoadBuilding/YearOfPlenty, zero-RNG verified, golden-replay bot harness (wave-4-ready). 142 tests. Review: spec PASS + quality APPROVED, zero Critical/Important; one Minor (devBoughtLast double-buy approximation) → tightened to per-type count in wave 4 (dispatched).
+- **Wave 4 (win + bonus tiles + golden to 10 VP) — IN FLIGHT**: vp.ts ledger (1/2/2/2/+cards), claimVictory (own turn, ≥10, reveal = finalPoints), ended-phase lockdown, Largest Army completeness, bot games reaching actual wins (AC2).
 
 ## Files to be touched
 
