@@ -49,6 +49,7 @@ export const ActionErrorCodeSchema = z.enum([
   "noPortThere",
   "illegalSetupStage",
   "pieceNotInStage",
+  "victoryInsufficient",
   "badOp",
 ]);
 export type ActionErrorCode = z.infer<typeof ActionErrorCodeSchema>;
@@ -151,6 +152,16 @@ export const EndTurnOpSchema = z
   .strict();
 export type EndTurnOp = z.infer<typeof EndTurnOpSchema>;
 
+/**
+ * Wave 4: declare victory. Legal any time during your own turn (official:
+ * "during your turn" — no hasRolled gate), awaitingSeven must be resolved,
+ * and the ledger must total ≥ 10 (VP_TO_WIN).
+ */
+export const ClaimVictoryOpSchema = z
+  .object({ type: z.literal("claimVictory"), ...Common })
+  .strict();
+export type ClaimVictoryOp = z.infer<typeof ClaimVictoryOpSchema>;
+
 // ---------------------------------------------------------------------------
 // Wave 3: trades
 // ---------------------------------------------------------------------------
@@ -244,6 +255,7 @@ export const OpSchema = z.discriminatedUnion("type", [
   BuildCityOpSchema,
   PlayKnightOpSchema,
   EndTurnOpSchema,
+  ClaimVictoryOpSchema,
   TradeBankOpSchema,
   TradePortOpSchema,
   TradeOfferOpSchema,

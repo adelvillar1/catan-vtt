@@ -47,8 +47,11 @@ Hermes skill `catan-board-game` — especially `references/base-rules.md` (mecha
 | VP cards immune: no play op, steal/discard resource-only | structural | devcards.test.ts | ✅ |
 | zero-RNG discipline for all wave-3 ops | cursor bit-identical (probed) | probes + tests | ✅ |
 | goldenReplay.simulateGame (greedy bot, independent metaSeed stream, 95/25 conservation per step, determinism+divergence) | wave-4-ready (claimVictory first in priority) | golden.test.ts (4) | ✅ |
-| bonus tiles (Longest Route ≥5, Largest Army ≥3, breakage) | recomputation on build | bonus.test.ts | ⏸ wave 4 |
-| claimVictory (≥10, own turn) | VP ledger | win.test.ts | ⏸ wave 4 |
+| _(wave 4 — win + VP: implemented, 2-stage review in flight; 159 tests; golden bots reach real 10-VP wins in all 6 seeded games)_ | | | |
+| victoryPoints ledger (sett 1 / city 2 / bonuses 2 current-holder / hidden VP cards 1) | vp.ts pure | vp.test.ts (8) | 🔄 |
+| claimVictory (own turn ≥10, pre-roll ok) + ended lockdown (ALL ops wrongPhase) | victoryInsufficient w/ details | golden.test.ts scripted+6 wins | 🔄 |
+| devBoughtThisTurn counter (double-buy closed; playable = count−bought ≥1) | 5-key defaulted counter | devcards.test.ts (17) | 🔄 |
+| Largest Army completeness (≥3, strict overtake, ties keep, instant transfer) | 4-probe regression | turn.test.ts (28) | 🔄 |
 | redactForSeat | projection purity | redact.test.ts | ⏸ wave 5 |
 
 Legend: ✅ verified · 🔄 implementing · ⏸ planned · ❌ rejected-by-review

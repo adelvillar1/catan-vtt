@@ -59,6 +59,7 @@ import {
   type BuildCityOp,
   type PlayKnightOp,
   type EndTurnOp,
+  type ClaimVictoryOp,
   type TradeBankOp,
   type TradePortOp,
   type TradeOfferOp,
@@ -76,9 +77,11 @@ import {
 } from "./board.js";
 import { Rng } from "./rng.js";
 import { recomputeLongestRoad } from "./road.js";
+import { victoryPoints, VP_TO_WIN } from "./vp.js";
 import {
   GameStateSchema,
   terrainResource,
+  type DevCardCounter,
   type DevCardType,
   type GameState,
   type PlayerState,
@@ -112,6 +115,15 @@ const zeroCounter = (): ResourceCounter => ({
   wool: 0,
   wheat: 0,
   ore: 0,
+});
+
+/** Empty five-key dev-card counter. */
+const zeroDevCounter = (): DevCardCounter => ({
+  knight: 0,
+  victoryPoint: 0,
+  monopoly: 0,
+  roadBuilding: 0,
+  yearOfPlenty: 0,
 });
 
 // ---------------------------------------------------------------------------
@@ -682,17 +694,19 @@ function requireDevPlayable(state: GameState, seat: number): PlayerState {
 }
 
 /**
- * devBoughtLast rule (LOCKED v1): a card bought this turn may not be played
- * the same turn. With duplicates the player may play an OLDER identical
- * card — implementable without tracking which copy was bought: the playable
- * count of type T is count(T) minus 1 when T === devBoughtLast.
- * Returns the devHand index of a playable copy of `card`, or -1.
+ * Wave-4 bought-this-turn rule (LOCKED v1): a card bought this turn may
+ * not be played the same turn. With duplicates the player may play an
+ * OLDER identical card — implementable without tracking which copy was
+ * bought: the playable count of type T is devHand count(T) minus
+ * devBoughtThisTurn[T]. Returns the devHand index of a playable copy of
+ * `card`, or -1. (Never negative by construction: buyDevCard appends the
+ * drawn card to devHand when it bumps the counter.)
  */
 function playableCardIndex(p: PlayerState, card: DevCardType): number {
   const idx = p.devHand.indexOf(card);
   if (idx === -1) return -1;
   const count = p.devHand.filter((c) => c === card).length;
-  if (p.devBoughtLast === card && count < 2) return -1;
+  if (count - p.devBoughtThisTurn[card] < 1) return -1;
   return idx;
 }
 
@@ -867,9 +881,9 @@ function applyPlayKnight(state: GameState, op: PlayKnightOp): GameState {
 }
 
 function applyEndTurn(state: GameState, op: EndTurnOp): GameState {
-  // 'ended' is terminal (claimVictory retires the game in wave 4): rotating
-  // seats on a finished game is illegal at the API level, not just via
-  // legalMoves.
+  // 'ended' is terminal (claimVictory retires the game — see the top-of-
+  // applyAction guard): rotating seats on a finished game is illegal at the
+  // API level, not just via legalMoves.
   if (state.phase !== "play") {
     fail("wrongPhase", "endTurn requires play phase");
   }
@@ -881,7 +895,7 @@ function applyEndTurn(state: GameState, op: EndTurnOp): GameState {
   players[op.seat] = {
     ...p,
     devPlayedThisTurn: false,
-    devBoughtLast: null,
+    devBoughtThisTurn: zeroDevCounter(),
   };
   return {
     ...state,
@@ -893,6 +907,34 @@ function applyEndTurn(state: GameState, op: EndTurnOp): GameState {
     // tradeAccept/tradeReject).
     pendingTrade: null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Wave 4 op handler — claimVictory
+// ---------------------------------------------------------------------------
+
+/**
+ * Declare victory (official: any time during your own turn — NO hasRolled
+ * gate; VP cards bought earlier still count, and a player may hit 10 before
+ * rolling). The seven-resolution window must be fully resolved (you cannot
+ * win mid-robber). On success the game retires: phase 'ended', winner set,
+ * finalPoints = the exact ledger total (may exceed 10).
+ */
+function applyClaimVictory(state: GameState, op: ClaimVictoryOp): GameState {
+  if (state.phase !== "play") fail("wrongPhase", "claimVictory requires play phase");
+  requireTurn(state, op.seat);
+  if (state.awaitingSeven) {
+    fail("awaitingSeven", "resolve the seven before claiming victory");
+  }
+  const vp = victoryPoints(state, op.seat);
+  if (vp < VP_TO_WIN) {
+    fail("victoryInsufficient", `seat ${op.seat} has ${vp} VP; ${VP_TO_WIN} required`, {
+      seat: op.seat,
+      points: vp,
+      required: VP_TO_WIN,
+    });
+  }
+  return { ...state, phase: "ended", winner: op.seat, finalPoints: vp };
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,7 +1141,10 @@ function applyBuyDevCard(state: GameState, op: BuyDevCardOp): GameState {
     ...p,
     hand: minus(p.hand, COST_DEVCARD),
     devHand: [...p.devHand, drawn],
-    devBoughtLast: drawn,
+    devBoughtThisTurn: {
+      ...p.devBoughtThisTurn,
+      [drawn]: p.devBoughtThisTurn[drawn] + 1,
+    },
   });
   return { ...next, deck: rest, bank: plus(state.bank, COST_DEVCARD) };
 }
@@ -1217,6 +1262,11 @@ function applyPlayYearOfPlenty(state: GameState, op: PlayYearOfPlentyOp): GameSt
 export function applyAction(state: GameState, op: Op): GameState {
   const s = GameStateSchema.parse(state);
   const parsed = OpSchema.parse(op);
+  // 'ended' is terminal for EVERY op — claimVictory is the sole path into
+  // it, and nothing (builds, trades, rolls, endTurn) is legal after it.
+  if (s.phase === "ended") {
+    fail("wrongPhase", "the game has ended", { winner: s.winner });
+  }
   switch (parsed.type) {
     case "placeSetupPiece":
       return applyPlaceSetupPiece(s, parsed);
@@ -1254,6 +1304,8 @@ export function applyAction(state: GameState, op: Op): GameState {
       return applyPlayRoadBuilding(s, parsed);
     case "playYearOfPlenty":
       return applyPlayYearOfPlenty(s, parsed);
+    case "claimVictory":
+      return applyClaimVictory(s, parsed);
     case "endTurn":
       return applyEndTurn(s, parsed);
   }
@@ -1401,6 +1453,12 @@ export function legalMoves(state: GameState, seat: number): Op[] {
   }
 
   const ops: Op[] = [];
+  // Wave 4: a win may be declared ANY time during your own turn (no
+  // hasRolled gate — VP cards bought last turn plus this turn's production
+  // can total 10 before the roll). Stable ordering: claimVictory is index 0.
+  if (victoryPoints(s, seat) >= VP_TO_WIN) {
+    ops.push({ type: "claimVictory", seat });
+  }
   if (!s.hasRolled) {
     // Production phase (pre-roll): dev cards are playable before rolling.
     if (!p.devPlayedThisTurn) {

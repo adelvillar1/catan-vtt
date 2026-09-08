@@ -131,6 +131,18 @@ const ResourceCounterSchema = z
   .strict();
 export type ResourceCounter = z.infer<typeof ResourceCounterSchema>;
 
+/** Five-key dev-card counter (explicit keys, strict — mirrors ResourceCounterSchema). */
+export const DevCardCounterSchema = z
+  .object({
+    knight: z.number().int().min(0),
+    victoryPoint: z.number().int().min(0),
+    monopoly: z.number().int().min(0),
+    roadBuilding: z.number().int().min(0),
+    yearOfPlenty: z.number().int().min(0),
+  })
+  .strict();
+export type DevCardCounter = z.infer<typeof DevCardCounterSchema>;
+
 export const PlayerStateSchema = z
   .object({
     seat: z.number().int(),
@@ -140,12 +152,19 @@ export const PlayerStateSchema = z
     devHand: z.array(DevCardTypeSchema),
     devPlayedThisTurn: z.boolean(),
     /**
-     * Wave 3: the dev card drawn by buyDevCard this turn (null otherwise).
-     * The bought card may not be played the same turn; with duplicates, an
-     * identical OLDER card may be played instead. Cleared at endTurn by the
-     * completing seat. Defaulted so pre-wave-3 state literals still parse.
+     * Wave 4: per-type count of dev cards drawn by buyDevCard this turn.
+     * Cards bought this turn may not be played the same turn; with
+     * duplicates, identical OLDER cards remain playable — the playable
+     * count of type T is devHand count(T) − devBoughtThisTurn[T].
+     * Zeroed at endTurn by the completing seat.
      */
-    devBoughtLast: z.nullable(DevCardTypeSchema).default(null),
+    devBoughtThisTurn: DevCardCounterSchema.default({
+      knight: 0,
+      victoryPoint: 0,
+      monopoly: 0,
+      roadBuilding: 0,
+      yearOfPlenty: 0,
+    }),
     roadsLeft: z.number().int().min(0),
     settlementsLeft: z.number().int().min(0),
     citiesLeft: z.number().int().min(0),

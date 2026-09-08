@@ -845,6 +845,102 @@ describe("playKnight", () => {
     expect(s.players[seatB].knightsPlayed).toBe(4);
     expect(s.largestArmy).toEqual({ holder: seatB, count: 4 });
   });
+
+  it("wave-4 completeness: below-threshold is silent, transfer is instant mid-turn, parity holds", () => {
+    // (a) 2 knights do NOT award the tile (threshold is 3).
+    let s = playSetup(variableSetup(63));
+    const seatA = s.currentSeat;
+    const seatB = (seatA + 1) % s.players.length;
+    const players = s.players.slice();
+    players[seatA] = { ...players[seatA], knightsPlayed: 2, devHand: ["knight"] };
+    s = { ...s, players };
+    s = applyAction(s, { type: "playKnight", seat: seatA });
+    expect(s.players[seatA].knightsPlayed).toBe(3);
+    // 2 → 3 IS the threshold crossing — awarded at exactly 3.
+    expect(s.largestArmy).toEqual({ holder: seatA, count: 3 });
+    // Resolve A's robber window (test scaffolding via the legal ops).
+    s = applyAction(s, legalMoves(s, seatA)[0]); // moveRobber
+    if (s.awaitingSeven) s = applyAction(s, legalMoves(s, seatA)[0]); // steal
+    expect(s.awaitingSeven).toBeNull();
+    // A pre-threshold probe: a seat at 1 knight plays → 2 → still unheld.
+    let s2 = playSetup(variableSetup(63));
+    const p2 = s2.players.slice();
+    p2[seatA] = { ...p2[seatA], knightsPlayed: 1, devHand: ["knight"] };
+    s2 = { ...s2, players: p2 };
+    s2 = applyAction(s2, { type: "playKnight", seat: seatA });
+    expect(s2.players[seatA].knightsPlayed).toBe(2);
+    expect(s2.largestArmy).toEqual({ holder: null, count: 0 });
+
+    // (b) Transfer happens INSIDE the playKnight op (mid-turn), not at
+    // endTurn: B at 3 knights vs incumbent A at 3 — B plays its 4th and the
+    // tile moves while AwaitingSeven is still open.
+    const seatBState = (() => {
+      const ps = s.players.slice();
+      ps[seatB] = { ...ps[seatB], knightsPlayed: 3, devHand: ["knight"] };
+      return { ...s, players: ps };
+    })();
+    expect(seatBState.largestArmy).toEqual({ holder: seatA, count: 3 });
+    const seatBPlay: GameState = { ...seatBState, currentSeat: seatB };
+    const duringPlay = applyAction(seatBPlay, { type: "playKnight", seat: seatB });
+    expect(duringPlay.awaitingSeven).not.toBeNull(); // still mid-robber
+    expect(duringPlay.players[seatB].knightsPlayed).toBe(4);
+    expect(duringPlay.largestArmy).toEqual({ holder: seatB, count: 4 });
+
+    // (c) Parity probe: the holder playing to match a HIGHER hypothetical
+    // count cannot happen (holder count IS largestArmy.count); instead the
+    // reverse — a challenger reaching the holder's count keeps the holder.
+    // A holds at 4 (state above), B already at 4 knights played would be
+    // strictly-greater-blocked. Reconstruct: A holder at 4, B at 3 → B
+    // plays → 4 = tie at 4 → A keeps.
+    const tied: GameState = (() => {
+      const ps = duringPlay.players.slice();
+      // A back up to 4 (test scaffolding — knightsPlayed only ever grows).
+      ps[seatA] = { ...ps[seatA], knightsPlayed: 4 };
+      return {
+        ...duringPlay,
+        players: ps,
+        largestArmy: { holder: seatA, count: 4 },
+      };
+    })();
+    const resolved = (() => {
+      // Resolve B's open window so the state is legal again.
+      let x = tied;
+      x = applyAction(x, legalMoves(x, seatB)[0]); // moveRobber
+      if (x.awaitingSeven) x = applyAction(x, legalMoves(x, seatB)[0]); // steal
+      return x;
+    })();
+    expect(resolved.awaitingSeven).toBeNull();
+    const parityPlay: GameState = (() => {
+      const ps = resolved.players.slice();
+      ps[seatB] = {
+        ...ps[seatB],
+        knightsPlayed: 3,
+        devHand: ["knight"],
+        devPlayedThisTurn: false, // scaffold a fresh-turn B
+      };
+      return { ...resolved, players: ps, currentSeat: seatB };
+    })();
+    const afterParity = applyAction(parityPlay, { type: "playKnight", seat: seatB });
+    expect(afterParity.players[seatB].knightsPlayed).toBe(4);
+    // 4 === largestArmy.count → NOT strictly greater → A keeps the tile.
+    expect(afterParity.largestArmy).toEqual({ holder: seatA, count: 4 });
+
+    // (d) No breakage: playing a knight never removes the holder's tile
+    // even when the holder itself plays (only count grows).
+    const holderPlays: GameState = (() => {
+      const ps = resolved.players.slice();
+      ps[seatA] = {
+        ...ps[seatA],
+        knightsPlayed: 4,
+        devHand: ["knight"],
+        devPlayedThisTurn: false, // scaffold a fresh-turn A
+      };
+      return { ...resolved, players: ps, currentSeat: seatA };
+    })();
+    const afterHolder = applyAction(holderPlays, { type: "playKnight", seat: seatA });
+    expect(afterHolder.players[seatA].knightsPlayed).toBe(5);
+    expect(afterHolder.largestArmy).toEqual({ holder: seatA, count: 5 });
+  });
 });
 
 // ---------------------------------------------------------------------------

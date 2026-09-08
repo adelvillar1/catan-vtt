@@ -11,7 +11,8 @@ export * from "./state.js";
 export * from "./setup.js";
 export * from "./actions.js";
 export * from "./road.js";
+export * from "./vp.js";
 export * from "./turn.js";
 export * from "./goldenReplay.js";
 
-export const KERNEL_VERSION = "0.3.0";
+export const KERNEL_VERSION = "0.4.0";

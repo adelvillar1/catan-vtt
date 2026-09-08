@@ -1,8 +1,9 @@
 /**
  * devcards.test.ts — wave 3: buyDevCard, playMonopoly, playRoadBuilding,
- * playYearOfPlenty, the devBoughtLast restriction, one-dev-per-turn, and
- * the devHand immunities (robber steal + discardSeven touch resources only;
- * victoryPoint has no op and is never playable).
+ * playYearOfPlenty, the devBoughtThisTurn restriction (wave-4 per-type
+ * tightening), one-dev-per-turn, and the devHand immunities (robber steal +
+ * discardSeven touch resources only; victoryPoint has no op and is never
+ * playable).
  *
  * Test-side state construction follows the give/forceRoll pattern from
  * turn.test.ts.
@@ -75,6 +76,14 @@ function withDevHand(state: GameState, seat: number, devHand: DevCardType[]): Ga
   return { ...state, players };
 }
 
+const zeroDev = (): PlayerState["devBoughtThisTurn"] => ({
+  knight: 0,
+  victoryPoint: 0,
+  monopoly: 0,
+  roadBuilding: 0,
+  yearOfPlenty: 0,
+});
+
 function code(fn: () => unknown): string {
   try {
     fn();
@@ -105,7 +114,7 @@ function actionPhase(seed: number): GameState {
 }
 
 describe("buyDevCard", () => {
-  it("pays ore+wool+wheat to the bank, draws the TOP of the deck, sets devBoughtLast", () => {
+  it("pays ore+wool+wheat to the bank, draws the TOP of the deck, counts it in devBoughtThisTurn", () => {
     let s = actionPhase(201);
     const seat = s.currentSeat;
     s = give(s, seat, { ore: 1, wool: 1, wheat: 1 });
@@ -114,7 +123,7 @@ describe("buyDevCard", () => {
     const s1 = applyAction(s, { type: "buyDevCard", seat });
     GameStateSchema.parse(s1);
     expect(s1.players[seat].devHand).toEqual([...s.players[seat].devHand, top]);
-    expect(s1.players[seat].devBoughtLast).toBe(top);
+    expect(s1.players[seat].devBoughtThisTurn).toEqual({ ...zeroDev(), [top]: 1 });
     expect(s1.deck).toEqual(s.deck.slice(1));
     expect(s1.deck).toHaveLength(s.deck.length - 1);
     for (const r of ["ore", "wool", "wheat"] as const) {
@@ -156,7 +165,7 @@ describe("buyDevCard", () => {
   });
 });
 
-describe("devBoughtLast restriction", () => {
+describe("devBoughtThisTurn restriction", () => {
   it("a card bought this turn cannot be played; an identical OLDER card can", () => {
     let s = actionPhase(211);
     const seat = s.currentSeat;
@@ -165,7 +174,7 @@ describe("devBoughtLast restriction", () => {
     s = give(s, seat, { ore: 2, wool: 2, wheat: 2 });
     // Case A: fresh hand — bought knight is the ONLY knight → unplayable.
     let s1 = applyAction(s, { type: "buyDevCard", seat });
-    expect(s1.players[seat].devBoughtLast).toBe("knight");
+    expect(s1.players[seat].devBoughtThisTurn.knight).toBe(1);
     expect(code(() => applyAction(s1, { type: "playKnight", seat }))).toBe("noDevCard");
     expect(legalMoves(s1, seat).some((m) => m.type === "playKnight")).toBe(false);
     // Case B: an older knight sat in hand before the buy → playable.
@@ -175,12 +184,12 @@ describe("devBoughtLast restriction", () => {
     s2 = applyAction(s2, { type: "playKnight", seat });
     expect(s2.players[seat].devHand).toEqual(["knight"]); // the bought one stays
     expect(s2.discardPile).toEqual(["knight"]);
-    // endTurn clears devBoughtLast: next turn the card is playable.
+    // endTurn clears devBoughtThisTurn: next turn the card is playable.
     const s3 = applyAction(s1, { type: "endTurn", seat });
-    expect(s3.players[seat].devBoughtLast).toBeNull();
+    expect(s3.players[seat].devBoughtThisTurn).toEqual(zeroDev());
   });
 
-  it("endTurn clears devPlayedThisTurn AND devBoughtLast AND pendingTrade together", () => {
+  it("endTurn clears devPlayedThisTurn AND devBoughtThisTurn AND pendingTrade together", () => {
     let s = actionPhase(213);
     const seat = s.currentSeat;
     s = { ...s, deck: ["knight", ...s.deck.slice(1)] };
@@ -196,8 +205,50 @@ describe("devBoughtLast restriction", () => {
     });
     const s2 = applyAction(s1, { type: "endTurn", seat });
     expect(s2.players[seat].devPlayedThisTurn).toBe(false);
-    expect(s2.players[seat].devBoughtLast).toBeNull();
+    expect(s2.players[seat].devBoughtThisTurn).toEqual(zeroDev());
     expect(s2.pendingTrade).toBeNull();
+  });
+
+  it("double-buy is closed: two knights bought the same turn are BOTH unplayable", () => {
+    let s = actionPhase(215);
+    const seat = s.currentSeat;
+    // Rig the deck: two knights on top.
+    s = { ...s, deck: ["knight", "knight", ...s.deck.filter((c) => c !== "knight")] };
+    s = give(s, seat, { ore: 2, wool: 2, wheat: 2 });
+    let s1 = applyAction(s, { type: "buyDevCard", seat });
+    s1 = applyAction(s1, { type: "buyDevCard", seat });
+    expect(s1.players[seat].devHand).toEqual(["knight", "knight"]);
+    expect(s1.players[seat].devBoughtThisTurn.knight).toBe(2);
+    // Wave-3 single-slot tracking would have allowed the play here
+    // (count 2 > 1); wave-4 per-type counting correctly refuses it.
+    expect(code(() => applyAction(s1, { type: "playKnight", seat }))).toBe("noDevCard");
+    expect(legalMoves(s1, seat).some((m) => m.type === "playKnight")).toBe(false);
+    // After endTurn both are playable again.
+    const s2 = applyAction(s1, { type: "endTurn", seat });
+    expect(s2.players[seat].devBoughtThisTurn).toEqual(zeroDev());
+  });
+
+  it("older copy of the SAME type stays playable even after two same-type buys", () => {
+    let s = actionPhase(217);
+    const seat = s.currentSeat;
+    s = withDevHand(s, seat, ["knight"]); // older copy
+    s = { ...s, deck: ["knight", "knight", ...s.deck.filter((c) => c !== "knight")] };
+    s = give(s, seat, { ore: 2, wool: 2, wheat: 2 });
+    let s1 = applyAction(s, { type: "buyDevCard", seat });
+    s1 = applyAction(s1, { type: "buyDevCard", seat });
+    // devHand: [old, new, new]; bought count 2 → playable count 3 − 2 = 1.
+    expect(s1.players[seat].devHand).toEqual(["knight", "knight", "knight"]);
+    expect(s1.players[seat].devBoughtThisTurn.knight).toBe(2);
+    const s2 = applyAction(s1, { type: "playKnight", seat });
+    // The older copy was consumed; the two bought copies remain.
+    expect(s2.players[seat].devHand).toEqual(["knight", "knight"]);
+    expect(s2.discardPile).toEqual(["knight"]);
+    // The knight opened the robber window; resolve it, then a second dev
+    // play is refused (one dev per turn).
+    let s3 = applyAction(s2, legalMoves(s2, seat)[0]); // moveRobber
+    if (s3.awaitingSeven) s3 = applyAction(s3, legalMoves(s3, seat)[0]); // stealCard
+    expect(s3.awaitingSeven).toBeNull();
+    expect(code(() => applyAction(s3, { type: "playKnight", seat }))).toBe("devAlreadyPlayed");
   });
 });
 
