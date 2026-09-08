@@ -13,7 +13,6 @@
  */
 import { z } from "zod";
 import { ResourceSchema } from "./state.js";
-
 // ---------------------------------------------------------------------------
 // Error codes
 // ---------------------------------------------------------------------------
@@ -41,6 +40,13 @@ export const ActionErrorCodeSchema = z.enum([
   "noOwnSettlementThere",
   "devAlreadyPlayed",
   "noDevCard",
+  "deckEmpty",
+  "tradePendingExists",
+  "noPendingTrade",
+  "notTradeCounterparty",
+  "tradeSameResource",
+  "portResourceMismatch",
+  "noPortThere",
   "illegalSetupStage",
   "pieceNotInStage",
   "badOp",
@@ -145,6 +151,88 @@ export const EndTurnOpSchema = z
   .strict();
 export type EndTurnOp = z.infer<typeof EndTurnOpSchema>;
 
+// ---------------------------------------------------------------------------
+// Wave 3: trades
+// ---------------------------------------------------------------------------
+
+export const TradeBankOpSchema = z
+  .object({
+    type: z.literal("tradeBank"),
+    ...Common,
+    offer: ResourceSchema,
+    demand: ResourceSchema,
+  })
+  .strict();
+export type TradeBankOp = z.infer<typeof TradeBankOpSchema>;
+
+export const TradePortOpSchema = z
+  .object({
+    type: z.literal("tradePort"),
+    ...Common,
+    portVertexId: z.string(),
+    offer: ResourceSchema,
+    demand: ResourceSchema,
+  })
+  .strict();
+export type TradePortOp = z.infer<typeof TradePortOpSchema>;
+
+export const TradeOfferOpSchema = z
+  .object({
+    type: z.literal("tradeOffer"),
+    ...Common,
+    with: SeatSchema,
+    give: z.array(ResourceSchema).min(1),
+    want: z.array(ResourceSchema).min(1),
+  })
+  .strict();
+export type TradeOfferOp = z.infer<typeof TradeOfferOpSchema>;
+
+export const TradeAcceptOpSchema = z
+  .object({ type: z.literal("tradeAccept"), ...Common })
+  .strict();
+export type TradeAcceptOp = z.infer<typeof TradeAcceptOpSchema>;
+
+export const TradeRejectOpSchema = z
+  .object({ type: z.literal("tradeReject"), ...Common })
+  .strict();
+export type TradeRejectOp = z.infer<typeof TradeRejectOpSchema>;
+
+// ---------------------------------------------------------------------------
+// Wave 3: development cards
+// ---------------------------------------------------------------------------
+
+export const BuyDevCardOpSchema = z
+  .object({ type: z.literal("buyDevCard"), ...Common })
+  .strict();
+export type BuyDevCardOp = z.infer<typeof BuyDevCardOpSchema>;
+
+export const PlayMonopolyOpSchema = z
+  .object({
+    type: z.literal("playMonopoly"),
+    ...Common,
+    resource: ResourceSchema,
+  })
+  .strict();
+export type PlayMonopolyOp = z.infer<typeof PlayMonopolyOpSchema>;
+
+export const PlayRoadBuildingOpSchema = z
+  .object({
+    type: z.literal("playRoadBuilding"),
+    ...Common,
+    edgeIds: z.array(z.string()).min(1).max(2),
+  })
+  .strict();
+export type PlayRoadBuildingOp = z.infer<typeof PlayRoadBuildingOpSchema>;
+
+export const PlayYearOfPlentyOpSchema = z
+  .object({
+    type: z.literal("playYearOfPlenty"),
+    ...Common,
+    cards: z.tuple([ResourceSchema, ResourceSchema]),
+  })
+  .strict();
+export type PlayYearOfPlentyOp = z.infer<typeof PlayYearOfPlentyOpSchema>;
+
 export const OpSchema = z.discriminatedUnion("type", [
   PlaceSetupPieceOpSchema,
   RollOpSchema,
@@ -156,5 +244,14 @@ export const OpSchema = z.discriminatedUnion("type", [
   BuildCityOpSchema,
   PlayKnightOpSchema,
   EndTurnOpSchema,
+  TradeBankOpSchema,
+  TradePortOpSchema,
+  TradeOfferOpSchema,
+  TradeAcceptOpSchema,
+  TradeRejectOpSchema,
+  BuyDevCardOpSchema,
+  PlayMonopolyOpSchema,
+  PlayRoadBuildingOpSchema,
+  PlayYearOfPlentyOpSchema,
 ]);
 export type Op = z.infer<typeof OpSchema>;

@@ -139,6 +139,13 @@ export const PlayerStateSchema = z
     hand: ResourceCounterSchema,
     devHand: z.array(DevCardTypeSchema),
     devPlayedThisTurn: z.boolean(),
+    /**
+     * Wave 3: the dev card drawn by buyDevCard this turn (null otherwise).
+     * The bought card may not be played the same turn; with duplicates, an
+     * identical OLDER card may be played instead. Cleared at endTurn by the
+     * completing seat. Defaulted so pre-wave-3 state literals still parse.
+     */
+    devBoughtLast: z.nullable(DevCardTypeSchema).default(null),
     roadsLeft: z.number().int().min(0),
     settlementsLeft: z.number().int().min(0),
     citiesLeft: z.number().int().min(0),
@@ -234,6 +241,25 @@ export const GameStateSchema = z
       })
       .strict(),
     hasRolled: z.boolean(),
+    /**
+     * Wave 3: a live domestic trade offer. Only the CURRENT seat may offer
+     * (tradeOffer); only pendingTrade.offeree may tradeAccept/tradeReject.
+     * Cleared on accept/reject/endTurn. Frozen (not cleared) while
+     * awaitingSeven is non-null — a 7 rolled between offer and accept
+     * suspends the offer until the window resolves.
+     */
+    pendingTrade: z
+      .nullable(
+        z
+          .object({
+            offeror: z.number().int(),
+            offeree: z.number().int(),
+            give: z.array(ResourceSchema).min(1),
+            want: z.array(ResourceSchema).min(1),
+          })
+          .strict(),
+      )
+      .default(null),
     awaitingSeven: AwaitingSevenSchema.nullable(),
     lastRoll: z.number().int().min(2).max(12).nullable(),
     rollLog: z.array(z.number().int()),

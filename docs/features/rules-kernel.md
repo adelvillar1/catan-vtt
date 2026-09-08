@@ -39,8 +39,14 @@ Hermes skill `catan-board-game` — especially `references/base-rules.md` (mecha
 | endTurn rotation + gates (wrongPhase on ended) | hasRolled + resolved-seven | turn.test.ts | ✅ |
 | legalMoves UI enumeration | bidirectional conformance | turn.test.ts sweep | ✅ |
 | random-play sim (400 ops incl. knights, conservation, cursor monotonic) | integration heartbeat | turn.test.ts | ✅ |
-| tradeDomestic / tradeBank / tradePort | trade legality | actions.test.ts | ⏸ wave 3 |
-| buyDevCard / playDevCard (5 kinds) | deck+turn rules | actions.test.ts | ⏸ wave 3 |
+| _(wave 3 — trades + dev cards: COMPLETE — spec PASS + quality APPROVED, zero blockers; 142 tests)_ | | | |
+| tradeBank (maritime 4:1) + tradePort (3:1/2:1 own-building) | ratio + portResourceMismatch + noPortThere | trade.test.ts (13) | ✅ |
+| tradeOffer/Accept/Reject (multisets, both-hands revalidation, 7-freeze, endTurn expiry) | pendingTrade lifecycle | trade.test.ts | ✅ |
+| buyDevCard (cost to bank, deck top, deckEmpty) | action-phase gate | devcards.test.ts (15) | ✅ |
+| playMonopoly / playRoadBuilding (no chaining) / playYearOfPlenty | production-phase gate, pre-roll ok | devcards.test.ts | ✅ |
+| VP cards immune: no play op, steal/discard resource-only | structural | devcards.test.ts | ✅ |
+| zero-RNG discipline for all wave-3 ops | cursor bit-identical (probed) | probes + tests | ✅ |
+| goldenReplay.simulateGame (greedy bot, independent metaSeed stream, 95/25 conservation per step, determinism+divergence) | wave-4-ready (claimVictory first in priority) | golden.test.ts (4) | ✅ |
 | bonus tiles (Longest Route ≥5, Largest Army ≥3, breakage) | recomputation on build | bonus.test.ts | ⏸ wave 4 |
 | claimVictory (≥10, own turn) | VP ledger | win.test.ts | ⏸ wave 4 |
 | redactForSeat | projection purity | redact.test.ts | ⏸ wave 5 |

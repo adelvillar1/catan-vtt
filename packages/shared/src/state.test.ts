@@ -107,6 +107,7 @@ const VALID_PLAYER: PlayerState = {
   hand: { wood: 0, brick: 0, wool: 0, wheat: 0, ore: 0 },
   devHand: [],
   devPlayedThisTurn: false,
+  devBoughtLast: null,
   roadsLeft: 15,
   settlementsLeft: 5,
   citiesLeft: 4,

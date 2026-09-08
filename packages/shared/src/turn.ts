@@ -59,6 +59,15 @@ import {
   type BuildCityOp,
   type PlayKnightOp,
   type EndTurnOp,
+  type TradeBankOp,
+  type TradePortOp,
+  type TradeOfferOp,
+  type TradeAcceptOp,
+  type TradeRejectOp,
+  type BuyDevCardOp,
+  type PlayMonopolyOp,
+  type PlayRoadBuildingOp,
+  type PlayYearOfPlentyOp,
 } from "./actions.js";
 import {
   buildIsland,
@@ -70,6 +79,7 @@ import { recomputeLongestRoad } from "./road.js";
 import {
   GameStateSchema,
   terrainResource,
+  type DevCardType,
   type GameState,
   type PlayerState,
   type Resource,
@@ -645,6 +655,47 @@ function requireBuildable(state: GameState, seat: number): PlayerState {
   return player(state, seat);
 }
 
+/**
+ * Wave-3 action-phase gate (trades + buyDevCard): own turn, play phase,
+ * awaitingSeven null, hasRolled true, not ended (phase covers 'ended').
+ */
+function requireActionPhase(state: GameState, seat: number): PlayerState {
+  if (state.phase !== "play") fail("wrongPhase", "action requires play phase");
+  requireTurn(state, seat);
+  if (state.awaitingSeven) fail("awaitingSeven", "resolve the seven first");
+  if (!state.hasRolled) fail("notRolledYet", "roll before trading or buying");
+  return player(state, seat);
+}
+
+/**
+ * Wave-3 dev-play gate: production phase — own turn, play phase,
+ * awaitingSeven null, devPlayedThisTurn false. NOT gated on hasRolled:
+ * dev cards may be played before rolling (official 6th Ed).
+ */
+function requireDevPlayable(state: GameState, seat: number): PlayerState {
+  if (state.phase !== "play") fail("wrongPhase", "dev cards require play phase");
+  requireTurn(state, seat);
+  if (state.awaitingSeven) fail("awaitingSeven", "resolve the seven first");
+  const p = player(state, seat);
+  if (p.devPlayedThisTurn) fail("devAlreadyPlayed", "already played a dev card this turn");
+  return p;
+}
+
+/**
+ * devBoughtLast rule (LOCKED v1): a card bought this turn may not be played
+ * the same turn. With duplicates the player may play an OLDER identical
+ * card — implementable without tracking which copy was bought: the playable
+ * count of type T is count(T) minus 1 when T === devBoughtLast.
+ * Returns the devHand index of a playable copy of `card`, or -1.
+ */
+function playableCardIndex(p: PlayerState, card: DevCardType): number {
+  const idx = p.devHand.indexOf(card);
+  if (idx === -1) return -1;
+  const count = p.devHand.filter((c) => c === card).length;
+  if (p.devBoughtLast === card && count < 2) return -1;
+  return idx;
+}
+
 function payCost(
   state: GameState,
   seat: number,
@@ -780,7 +831,7 @@ function applyPlayKnight(state: GameState, op: PlayKnightOp): GameState {
   if (state.awaitingSeven) fail("awaitingSeven", "resolve the seven first");
   const p = player(state, op.seat);
   if (p.devPlayedThisTurn) fail("devAlreadyPlayed", "already played a dev card this turn");
-  const idx = p.devHand.indexOf("knight");
+  const idx = playableCardIndex(p, "knight");
   if (idx === -1) fail("noDevCard", "no knight in hand");
 
   const devHand = p.devHand.slice();
@@ -827,13 +878,331 @@ function applyEndTurn(state: GameState, op: EndTurnOp): GameState {
   if (!state.hasRolled) fail("notRolledYet", "roll before ending the turn");
   const p = player(state, op.seat);
   const players = state.players.slice();
-  players[op.seat] = { ...p, devPlayedThisTurn: false };
+  players[op.seat] = {
+    ...p,
+    devPlayedThisTurn: false,
+    devBoughtLast: null,
+  };
   return {
     ...state,
     players,
     currentSeat: (op.seat + 1) % state.players.length,
     hasRolled: false,
+    // An unaccepted domestic offer expires with the turn (offeror may not
+    // cancel in v1 — this is the only other clearing path besides
+    // tradeAccept/tradeReject).
+    pendingTrade: null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Wave 3 op handlers — trades
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute a single maritime exchange: `ratio` copies of `offer` from the
+ * seat's hand to the bank, 1 copy of `demand` from the bank to the hand.
+ * Gates and ratio selection are the callers' job; this enforces the
+ * resource mechanics only.
+ */
+function executeMaritime(
+  state: GameState,
+  seat: number,
+  ratio: number,
+  offer: Resource,
+  demand: Resource,
+): GameState {
+  const p = player(state, seat);
+  if (offer === demand) {
+    fail("tradeSameResource", "cannot trade a resource for itself", { offer });
+  }
+  if (p.hand[offer] < ratio) {
+    fail("insufficientHand", `maritime trade needs ${ratio}×${offer}`, {
+      offer,
+      ratio,
+      have: p.hand[offer],
+    });
+  }
+  if (state.bank[demand] < 1) {
+    fail("insufficientBank", `bank has no ${demand}`, { demand });
+  }
+  const cost: Partial<ResourceCounter> = { [offer]: ratio };
+  const gain: Partial<ResourceCounter> = { [demand]: 1 };
+  const next = replacePlayer(state, seat, {
+    ...p,
+    hand: plus(minus(p.hand, cost), gain),
+  });
+  return { ...next, bank: plus(minus(state.bank, gain), cost) };
+}
+
+function applyTradeBank(state: GameState, op: TradeBankOp): GameState {
+  requireActionPhase(state, op.seat);
+  return executeMaritime(state, op.seat, 4, op.offer, op.demand);
+}
+
+/** Effective port for a seat at a vertex, or a fail() with the right code. */
+function requireOwnedPort(
+  state: GameState,
+  seat: number,
+  portVertexId: string,
+): { type: "generic" } | { type: Resource } {
+  const building = state.buildings[portVertexId];
+  if (!building || building.owner !== seat) {
+    fail("noPortThere", "you need your own building on the port vertex", {
+      portVertexId,
+      seat,
+    });
+  }
+  const port = state.config.ports.find((x) => x.vertexId === portVertexId);
+  if (!port) {
+    fail("noPortThere", `no port at vertex ${portVertexId}`, { portVertexId });
+  }
+  return port.type === "generic" ? { type: "generic" } : { type: port.type };
+}
+
+function applyTradePort(state: GameState, op: TradePortOp): GameState {
+  requireActionPhase(state, op.seat);
+  const port = requireOwnedPort(state, op.seat, op.portVertexId);
+  let ratio: number;
+  if (port.type === "generic") {
+    ratio = 3;
+  } else {
+    // 2:1 port trades ONLY its own resource (e.g. a wood port trades
+    // wood→X; offering brick there is a mismatch, not a 4:1 fallback).
+    if (op.offer !== port.type) {
+      fail("portResourceMismatch", `a 2:1 ${port.type} port only accepts ${port.type}`, {
+        port: port.type,
+        offer: op.offer,
+      });
+    }
+    ratio = 2;
+  }
+  return executeMaritime(state, op.seat, ratio, op.offer, op.demand);
+}
+
+function applyTradeOffer(state: GameState, op: TradeOfferOp): GameState {
+  const p = requireActionPhase(state, op.seat);
+  if (state.pendingTrade) {
+    fail("tradePendingExists", "a trade offer is already pending", {
+      pending: state.pendingTrade,
+    });
+  }
+  if (op.with === op.seat) {
+    fail("badOp", "cannot trade with yourself", { seat: op.seat });
+  }
+  const offeree = state.players[op.with];
+  if (!offeree) fail("badSeat", `no player at seat ${op.with}`, { with: op.with });
+  const giveSet = new Set(op.give);
+  for (const r of op.want) {
+    if (giveSet.has(r)) {
+      fail("tradeSameResource", `${r} appears in both give and want`, {
+        resource: r,
+      });
+    }
+  }
+  // The offeror's hand must cover `give` AT OFFER TIME (re-checked at
+  // accept — a robber steal in between can void it).
+  const cost: Partial<ResourceCounter> = {};
+  for (const r of op.give) cost[r] = (cost[r] ?? 0) + 1;
+  if (!hasCards(p.hand, cost)) {
+    fail("insufficientHand", "hand does not cover the offered cards", {
+      give: op.give,
+    });
+  }
+  return {
+    ...state,
+    pendingTrade: {
+      offeror: op.seat,
+      offeree: op.with,
+      give: op.give.slice(),
+      want: op.want.slice(),
+    },
+  };
+}
+
+function applyTradeAccept(state: GameState, op: TradeAcceptOp): GameState {
+  if (state.phase !== "play") fail("wrongPhase", "tradeAccept requires play phase");
+  // A 7 rolled between offer and accept freezes the trade window: resolve
+  // the robber first; the (possibly voided) offer survives.
+  if (state.awaitingSeven) {
+    fail("awaitingSeven", "resolve the seven before answering the offer");
+  }
+  const pt = state.pendingTrade;
+  if (!pt) fail("noPendingTrade", "no trade offer is pending");
+  if (op.seat !== pt.offeree) {
+    fail("notTradeCounterparty", "only the offeree may accept", {
+      offeree: pt.offeree,
+      seat: op.seat,
+    });
+  }
+  const offeror = player(state, pt.offeror);
+  const offeree = player(state, pt.offeree);
+  const giveCost: Partial<ResourceCounter> = {};
+  for (const r of pt.give) giveCost[r] = (giveCost[r] ?? 0) + 1;
+  const wantCost: Partial<ResourceCounter> = {};
+  for (const r of pt.want) wantCost[r] = (wantCost[r] ?? 0) + 1;
+  if (!hasCards(offeror.hand, giveCost)) {
+    fail("insufficientHand", "offeror can no longer cover the offer", {
+      offeror: pt.offeror,
+    });
+  }
+  if (!hasCards(offeree.hand, wantCost)) {
+    fail("insufficientHand", "offeree cannot cover the counter-payment", {
+      offeree: pt.offeree,
+    });
+  }
+  const players = state.players.slice();
+  players[pt.offeror] = {
+    ...offeror,
+    hand: plus(minus(offeror.hand, giveCost), wantCost),
+  };
+  players[pt.offeree] = {
+    ...offeree,
+    hand: plus(minus(offeree.hand, wantCost), giveCost),
+  };
+  return { ...state, players, pendingTrade: null };
+}
+
+function applyTradeReject(state: GameState, op: TradeRejectOp): GameState {
+  if (state.phase !== "play") fail("wrongPhase", "tradeReject requires play phase");
+  if (state.awaitingSeven) {
+    fail("awaitingSeven", "resolve the seven before answering the offer");
+  }
+  const pt = state.pendingTrade;
+  if (!pt) fail("noPendingTrade", "no trade offer is pending");
+  if (op.seat !== pt.offeree) {
+    fail("notTradeCounterparty", "only the offeree may reject", {
+      offeree: pt.offeree,
+      seat: op.seat,
+    });
+  }
+  return { ...state, pendingTrade: null };
+}
+
+// ---------------------------------------------------------------------------
+// Wave 3 op handlers — development cards
+// ---------------------------------------------------------------------------
+
+const COST_DEVCARD: Partial<ResourceCounter> = { ore: 1, wool: 1, wheat: 1 };
+
+function applyBuyDevCard(state: GameState, op: BuyDevCardOp): GameState {
+  const p = requireActionPhase(state, op.seat);
+  if (state.deck.length === 0) fail("deckEmpty", "the dev deck is exhausted");
+  if (!hasCards(p.hand, COST_DEVCARD)) {
+    fail("insufficientHand", "a dev card costs ore + wool + wheat", {
+      cost: COST_DEVCARD,
+    });
+  }
+  // Draw the TOP of the deck. The cost goes to the supply (bank).
+  const [drawn, ...rest] = state.deck;
+  const next = replacePlayer(state, op.seat, {
+    ...p,
+    hand: minus(p.hand, COST_DEVCARD),
+    devHand: [...p.devHand, drawn],
+    devBoughtLast: drawn,
+  });
+  return { ...next, deck: rest, bank: plus(state.bank, COST_DEVCARD) };
+}
+
+/** Remove the playable copy at `idx`, mark the turn's dev played, discard. */
+function playCardFromHand(
+  state: GameState,
+  seat: number,
+  p: PlayerState,
+  idx: number,
+  card: DevCardType,
+): GameState {
+  const devHand = p.devHand.slice();
+  devHand.splice(idx, 1);
+  const next = replacePlayer(state, seat, {
+    ...p,
+    devHand,
+    devPlayedThisTurn: true,
+  });
+  return { ...next, discardPile: [...state.discardPile, card] };
+}
+
+function applyPlayMonopoly(state: GameState, op: PlayMonopolyOp): GameState {
+  const p = requireDevPlayable(state, op.seat);
+  const idx = playableCardIndex(p, "monopoly");
+  if (idx === -1) fail("noDevCard", "no monopoly in hand");
+  let next = playCardFromHand(state, op.seat, p, idx, "monopoly");
+  // Take EVERY copy of `resource` from every other player's hand. The bank
+  // is untouched; total resources are conserved (pure hand redistribution).
+  const players = next.players.slice();
+  let taken = 0;
+  for (let s = 0; s < players.length; s++) {
+    if (s === op.seat) continue;
+    const q = players[s];
+    const n = q.hand[op.resource];
+    if (n === 0) continue;
+    taken += n;
+    players[s] = { ...q, hand: minus(q.hand, { [op.resource]: n }) };
+  }
+  const me = players[op.seat];
+  players[op.seat] = { ...me, hand: plus(me.hand, { [op.resource]: taken }) };
+  return { ...next, players };
+}
+
+function applyPlayRoadBuilding(state: GameState, op: PlayRoadBuildingOp): GameState {
+  const p = requireDevPlayable(state, op.seat);
+  const idx = playableCardIndex(p, "roadBuilding");
+  if (idx === -1) fail("noDevCard", "no roadBuilding in hand");
+  // Duplicate edge ids would silently place one road for a 2-road card —
+  // reject loudly instead.
+  if (new Set(op.edgeIds).size !== op.edgeIds.length) {
+    fail("badOp", "edgeIds must be distinct", { edgeIds: op.edgeIds });
+  }
+  if (p.roadsLeft === 0) fail("noRoadsLeft", "no roads remaining");
+  if (p.roadsLeft < op.edgeIds.length) {
+    fail("noRoadsLeft", `only ${p.roadsLeft} road piece(s) left`, {
+      roadsLeft: p.roadsLeft,
+      requested: op.edgeIds.length,
+    });
+  }
+  // Official: the roads are placed SIMULTANEOUSLY, each anchored to the
+  // network as it existed BEFORE any of them — no chaining (an edge that
+  // only touches the other new edge is illegal). roadPlacementLegal reads
+  // state.roads only, and we validate against the pre-play state, so a
+  // chain edge correctly fails 'notConnected' (or 'roadBlocked' per the
+  // start-point rule). Occupied edges fail 'noEdge' (buildRoad parity).
+  for (const eId of op.edgeIds) {
+    const leg = roadPlacementLegal(state, op.seat, eId, null);
+    if (!leg.ok) {
+      fail(leg.code!, `roadBuilding road illegal at ${eId}`, {
+        edgeId: eId,
+        code: leg.code,
+      });
+    }
+  }
+  let next = playCardFromHand(state, op.seat, p, idx, "roadBuilding");
+  next = replacePlayer(next, op.seat, {
+    ...player(next, op.seat),
+    roadsLeft: p.roadsLeft - op.edgeIds.length,
+  });
+  const roads = { ...next.roads };
+  for (const eId of op.edgeIds) roads[eId] = { owner: op.seat };
+  next = { ...next, roads };
+  return { ...next, longestRoad: recomputeLongestRoad(TOPO, next) };
+}
+
+function applyPlayYearOfPlenty(state: GameState, op: PlayYearOfPlentyOp): GameState {
+  const p = requireDevPlayable(state, op.seat);
+  const idx = playableCardIndex(p, "yearOfPlenty");
+  if (idx === -1) fail("noDevCard", "no yearOfPlenty in hand");
+  const want: Partial<ResourceCounter> = {};
+  for (const r of op.cards) want[r] = (want[r] ?? 0) + 1;
+  if (!hasCards(state.bank, want)) {
+    fail("insufficientBank", "bank cannot cover the requested cards", {
+      cards: op.cards,
+    });
+  }
+  let next = playCardFromHand(state, op.seat, p, idx, "yearOfPlenty");
+  next = replacePlayer(next, op.seat, {
+    ...player(next, op.seat),
+    hand: plus(player(next, op.seat).hand, want),
+  });
+  return { ...next, bank: minus(state.bank, want) };
 }
 
 // ---------------------------------------------------------------------------
@@ -867,6 +1236,24 @@ export function applyAction(state: GameState, op: Op): GameState {
       return applyBuildCity(s, parsed);
     case "playKnight":
       return applyPlayKnight(s, parsed);
+    case "tradeBank":
+      return applyTradeBank(s, parsed);
+    case "tradePort":
+      return applyTradePort(s, parsed);
+    case "tradeOffer":
+      return applyTradeOffer(s, parsed);
+    case "tradeAccept":
+      return applyTradeAccept(s, parsed);
+    case "tradeReject":
+      return applyTradeReject(s, parsed);
+    case "buyDevCard":
+      return applyBuyDevCard(s, parsed);
+    case "playMonopoly":
+      return applyPlayMonopoly(s, parsed);
+    case "playRoadBuilding":
+      return applyPlayRoadBuilding(s, parsed);
+    case "playYearOfPlenty":
+      return applyPlayYearOfPlenty(s, parsed);
     case "endTurn":
       return applyEndTurn(s, parsed);
   }
@@ -932,8 +1319,37 @@ function legalSetupMoves(state: GameState, seat: number): Op[] {
 }
 
 /**
+ * Road-building card candidates against the PRE-PLAY network (no chaining):
+ * every distinct non-empty subset (size ≤ `maxRoads`, ≤2) of the currently
+ * legal road edges for `seat`.
+ */
+function roadBuildingCandidates(
+  state: GameState,
+  seat: number,
+  maxRoads: number,
+): string[][] {
+  const legal = TOPO.edges
+    .filter((e) => roadPlacementLegal(state, seat, e.id, null).ok)
+    .map((e) => e.id);
+  const out: string[][] = legal.map((e) => [e]);
+  if (maxRoads >= 2) {
+    for (let i = 0; i < legal.length; i++) {
+      for (let j = i + 1; j < legal.length; j++) {
+        out.push([legal[i], legal[j]]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Everything `seat` may do right now. O(vertices + edges + resources) per
  * call; safe to run every frame for UI affordances.
+ *
+ * DOMESTIC-TRADE EXCEPTION (wave 3): tradeOffer is deliberately NOT
+ * enumerated — its give/want arrays are free multisets the UI composes, so
+ * applyAction is the sole authority on offer legality. When the seat is the
+ * offeree of a pending offer, tradeAccept and tradeReject ARE enumerated.
  */
 export function legalMoves(state: GameState, seat: number): Op[] {
   const s = GameStateSchema.parse(state);
@@ -972,21 +1388,73 @@ export function legalMoves(state: GameState, seat: number): Op[] {
       .map((victimSeat) => ({ type: "stealCard" as const, seat, victimSeat }));
   }
 
-  if (seat !== s.currentSeat) return [];
+  if (seat !== s.currentSeat) {
+    // Off-turn: the only off-seat play-phase ops are answering a pending
+    // domestic offer addressed to this seat.
+    if (s.pendingTrade && s.pendingTrade.offeree === seat) {
+      return [
+        { type: "tradeAccept", seat },
+        { type: "tradeReject", seat },
+      ];
+    }
+    return [];
+  }
 
   const ops: Op[] = [];
   if (!s.hasRolled) {
-    // Pre-roll: a knight may be played before rolling.
-    if (!p.devPlayedThisTurn && p.devHand.includes("knight")) {
-      ops.push({ type: "playKnight", seat });
+    // Production phase (pre-roll): dev cards are playable before rolling.
+    if (!p.devPlayedThisTurn) {
+      if (playableCardIndex(p, "knight") !== -1) ops.push({ type: "playKnight", seat });
+      if (playableCardIndex(p, "monopoly") !== -1) {
+        for (const resource of RESOURCES) {
+          ops.push({ type: "playMonopoly", seat, resource });
+        }
+      }
+      if (p.roadsLeft > 0 && playableCardIndex(p, "roadBuilding") !== -1) {
+        for (const edgeIds of roadBuildingCandidates(s, seat, p.roadsLeft)) {
+          ops.push({ type: "playRoadBuilding", seat, edgeIds });
+        }
+      }
+      if (playableCardIndex(p, "yearOfPlenty") !== -1) {
+        for (const a of RESOURCES) {
+          for (const b of RESOURCES) {
+            const want: Partial<ResourceCounter> = { [a]: 1 };
+            want[b] = (want[b] ?? 0) + 1;
+            if (hasCards(s.bank, want)) {
+              ops.push({ type: "playYearOfPlenty", seat, cards: [a, b] });
+            }
+          }
+        }
+      }
     }
     ops.push({ type: "roll", seat });
     return ops;
   }
 
   // Action phase.
-  if (!p.devPlayedThisTurn && p.devHand.includes("knight")) {
-    ops.push({ type: "playKnight", seat });
+  if (!p.devPlayedThisTurn) {
+    if (playableCardIndex(p, "knight") !== -1) ops.push({ type: "playKnight", seat });
+    if (playableCardIndex(p, "monopoly") !== -1) {
+      for (const resource of RESOURCES) {
+        ops.push({ type: "playMonopoly", seat, resource });
+      }
+    }
+    if (p.roadsLeft > 0 && playableCardIndex(p, "roadBuilding") !== -1) {
+      for (const edgeIds of roadBuildingCandidates(s, seat, p.roadsLeft)) {
+        ops.push({ type: "playRoadBuilding", seat, edgeIds });
+      }
+    }
+    if (playableCardIndex(p, "yearOfPlenty") !== -1) {
+      for (const a of RESOURCES) {
+        for (const b of RESOURCES) {
+          const want: Partial<ResourceCounter> = { [a]: 1 };
+          want[b] = (want[b] ?? 0) + 1;
+          if (hasCards(s.bank, want)) {
+            ops.push({ type: "playYearOfPlenty", seat, cards: [a, b] });
+          }
+        }
+      }
+    }
   }
   if (p.roadsLeft > 0 && hasCards(p.hand, COST_ROAD) && hasCards(s.bank, COST_ROAD)) {
     for (const e of TOPO.edges) {
@@ -1013,6 +1481,39 @@ export function legalMoves(state: GameState, seat: number): Op[] {
       }
     }
   }
+  // Maritime trades (wave 3). Domestic offers are UI-composed (see JSDoc).
+  for (const offer of RESOURCES) {
+    if (p.hand[offer] < 4) continue;
+    for (const demand of RESOURCES) {
+      if (demand === offer || s.bank[demand] < 1) continue;
+      ops.push({ type: "tradeBank", seat, offer, demand });
+    }
+  }
+  for (const port of s.config.ports) {
+    const b = s.buildings[port.vertexId];
+    if (!b || b.owner !== seat) continue;
+    const ratio = port.type === "generic" ? 3 : 2;
+    const offerables: Resource[] =
+      port.type === "generic" ? RESOURCES.slice() : [port.type as Resource];
+    for (const offer of offerables) {
+      if (p.hand[offer] < ratio) continue;
+      for (const demand of RESOURCES) {
+        if (demand === offer || s.bank[demand] < 1) continue;
+        ops.push({ type: "tradePort", seat, portVertexId: port.vertexId, offer, demand });
+      }
+    }
+  }
+  // Dev-card purchase.
+  if (
+    s.deck.length > 0 &&
+    hasCards(p.hand, COST_DEVCARD) &&
+    hasCards(s.bank, COST_DEVCARD)
+  ) {
+    ops.push({ type: "buyDevCard", seat });
+  }
+  // The current seat may still be the offeree of its own... no — an offeror
+  // can never be its own offeree (tradeOffer rejects with===seat), so no
+  // accept/reject enumeration is needed here.
   ops.push({ type: "endTurn", seat });
   return ops;
 }
