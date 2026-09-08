@@ -1,0 +1,22 @@
+{
+  "name": "catan-vtt",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CATAN virtual tabletop — rules kernel, 3D island table, WS multiplayer",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/shared --if-present",
+    "typecheck": "tsc --noEmit -p packages/shared/tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
+}
