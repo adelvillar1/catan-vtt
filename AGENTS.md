@@ -1,4 +1,3 @@
-
 # catan-vtt
 
 > CATAN virtual tabletop — full-fidelity base-game rules kernel, cinematic 3D island table, WS multiplayer for 3–4 friends.
