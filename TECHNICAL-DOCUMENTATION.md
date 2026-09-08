@@ -49,12 +49,15 @@ Rationale: [`docs/architecture/overview.md`](docs/architecture/overview.md)
 
 ## 3. Architecture
 
-**Kernel/client split (mahjong-vtt pattern):** every game mutation goes through `applyAction(state, action) → state'` in `packages/shared`. Illegal actions throw/return errors; the server is the only one who applies actions for a room; clients hold a replicated `GameState` and render it. No client ever mutates state locally except optimistic input that the server re-applies.
+**Kernel/client split (mahjong-vtt pattern):** every game mutation goes through `applyAction(state, action) → state'` in `packages/shared` (KERNEL_VERSION 0.5.0). Illegal actions throw `ActionError(code, message, details?)` with a 32-code exhaustive union; the server is the only one who applies actions for a room; clients hold a **seat projection** (`redactForSeat(state, seat)` — still a schema-valid `GameState`) and render it. Clients optimistically apply ONLY the commuting op set (builds, own-hand trades, own dev plays, moveRobber, discardSeven, endTurn — proven strict-equal vs server in `redact.test.ts`); `roll`/`stealCard`/`buyDevCard`/`tradeAccept`/production-exposing ops are server-authoritative (they draw from the hidden rng stream or branch on hidden data).
 
-<add-when-implemented>
-- Room lifecycle messages (join/seat/rehydrate/resync)
-- Dice/RNG ownership (server-side seed so all clients agree)
-</add-when-implemented>
+Kernel facts (implemented + reviewed, waves 1–5):
+- Deterministic seeded RNG: `Rng.restore({seed: rngSeed, cursor: rngCursor})` is the only mid-game RNG entry; roll = 2 draws, steal = 1; `legalMoves` and all wave-3/4/5 ops draw ZERO.
+- `OpSchema` (z.discriminatedUnion, 20 ops, all `.strict()`) is the single source of truth — the server relay whitelist in M2 must derive from it (AC9).
+- `legalMoves(state, seat)` enumerates every op `applyAction` would accept (bidirectional conformance swept in tests); documented exception: domestic `tradeOffer` is UI-composed, not enumerated.
+- Setup: `variableSetup`/`randomDiscSetup(seed)` generators (10k-seed property-tested), snake placement with second-settlement terrain payment, port legality with swap-repair, seat 0 starts.
+- Golden replay: `simulateGame(seed, {metaSeed})` greedy bot; six seeded games reach real 10-VP wins; conservation invariants (95 resources / 25 deck cards) asserted per step.
+- **M2 TODO (from wave-5 review):** `rollLog` + exposed `rngCursor` make the 2^32 dice seed brute-forceable by any client holding a projection — the room server must NOT ship the replayable stream (rebase/hide cursor per projection, or ratchet the seed server-side).
 
 Detail: [`docs/features/rules-kernel.md`](docs/features/rules-kernel.md), [`docs/features/multiplayer.md`](docs/features/multiplayer.md)
 
@@ -70,7 +73,32 @@ Style: WebSocket JSON frames (no HTTP API yet).
 - Server→client: `{ type: "state" | "joined" | "seat" | "error" | "chat", ... }`
 - New-op touch list (lesson from dnd-vtt): kernel action type + zod enum + server relay whitelist + client dispatcher + tests, in ONE commit.
 
-Full op table: <add-when-implemented>
+Full op table (kernel `packages/shared/src/actions.ts`, 20 ops; all `{type, seat}` + `.strict()`; authority: `docs/features/rules-kernel.md` matrix):
+
+| Op | Extra fields | Primary gates | Distinct error codes |
+|---|---|---|---|
+| placeSetupPiece | kind(settlement\|road), vertexId\|edgeId | setup phase, snake queue, anchor-only road, distance rule | illegalSetupStage, vertexOccupied, distanceRule, roadBlocked, notConnected, noEdge |
+| roll | — | own turn, !hasRolled, seven-window closed | alreadyRolled, awaitingSeven |
+| discardSeven | cards[] (multiset) | queue front seat only, exact count | wrongDiscardSeat, insufficientHand, badOp |
+| moveRobber | hexId | awaitingSeven, mustMoveRobber, ≠ current hex | robberSameHex, awaitingSeven |
+| stealCard | victimSeat | robber hex occupants w/ handTotal>0 | noVictim, awaitingSeven |
+| buildRoad | edgeId | own turn, hasRolled, wb cost, connectivity, start-past-enemy blocked | roadBlocked, notConnected, noRoadsLeft |
+| buildSettlement | vertexId | wbsw cost, distance rule, connectivity | distanceRule, vertexOccupied, notConnected, noSettlementsLeft |
+| buildCity | vertexId | 2 wheat+3 ore, own settlement only | noOwnSettlementThere, noCitiesLeft |
+| playKnight | — | dev gate: own turn, !devPlayed, older-copy rule | noDevCard, devAlreadyPlayed |
+| endTurn | — | hasRolled, seven resolved; clears pendingTrade + dev counters | awaitingSeven, notRolledYet |
+| claimVictory | — | own turn, VP ledger ≥10, seven resolved | victoryInsufficient |
+| tradeBank | offer, demand (resources) | own turn, hasRolled, 4:1, demand≠offer | insufficientHand, insufficientBank, tradeSameResource |
+| tradePort | portVertexId, offer, demand | own building on port node; 2:1 type-locked | noPortThere, portResourceMismatch |
+| tradeOffer | with, give[], want[] | proposer=currentSeat, no pending, hand covers give | tradePendingExists |
+| tradeAccept | — | offeree only; both hands revalidated | noPendingTrade, notTradeCounterparty |
+| tradeReject | — | offeree only; clears pending | noPendingTrade |
+| buyDevCard | — | own turn, hasRolled, o+w+wh cost, deck non-empty | deckEmpty |
+| playMonopoly | resource | dev gate; strips others' totals | noDevCard |
+| playRoadBuilding | edgeIds[1\|2] | dev gate; each edge anchored PRE-card (no chaining) | notConnected, noRoadsLeft |
+| playYearOfPlenty | cards[2] | dev gate; bank pair (same ok) | insufficientBank |
+
+Room protocol (M2, planned): client→server `OpSchema` frames only (server relay whitelist DERIVES from the kernel union — AC9); server→client `state` (redacted per seat), `legalMoves`, `error {code}`. RNG: server never ships the replayable stream (see §3 M2 TODO).
 
 ## 6. Authentication & Authorization
 

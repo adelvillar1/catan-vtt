@@ -29,11 +29,11 @@ Hermes skill `catan-board-game` — especially `references/base-rules.md` (mecha
 | variableSetup(seed) — spiral discs/ports/robber/bank/deck | setup invariants + port swap-repair | setup.test.ts (10k-seed property) | ✅ |
 | randomDiscSetup(seed) — red 6/8 separation | swap-repair, never adjacent reds | setup.test.ts (10k-seed property) | ✅ |
 | _(wave 2 — turn machine: COMPLETE — 2 reviews + fix batch + parent surgical fix; 110 tests)_ | | | |
-| Op schema (10 ops, ActionError code union, noOwnSettlementThere) | z.discriminatedUnion | actions.test.ts | ✅ |
+| Op schema (20 ops total; ActionError code union incl. noOwnSettlementThere, victoryInsufficient) | z.discriminatedUnion | actions.test.ts | ✅ |
 | roll + production + bank-exhaustion rules | restore({seed,cursor}) 2 draws | turn.test.ts | ✅ |
-| 7-resolve: discardQueue → moveRobber → stealCard | awaitingSeven window gates | turn.test.ts matrix | ✅ |
+| 7-resolve: discardSeven (queue → debtor-only gates) → moveRobber → stealCard | awaitingSeven window gates | turn.test.ts matrix | ✅ |
 | setup snake (round 1 + reversed round 2, 2nd settlement pays; anchor-only setup road; seat 0 starts) | placeSetupPiece | turn.test.ts | ✅ |
-| builds — road runs UP TO enemy settlement (legal), not THROUGH it (roadBlocked) | start-point rule, official | turn.test.ts gate test | ✅ |
+| builds buildRoad/buildSettlement/buildCity — road runs UP TO enemy settlement (legal), not THROUGH it (roadBlocked); city only on own settlement (noOwnSettlementThere) | start-point rule + caps 15/5/4, official | turn.test.ts gate test | ✅ |
 | playKnight + Largest Army award/transfer | strictly-greater, ties keep | turn.test.ts | ✅ |
 | Longest Route (≥5; ONLY opponent buildings break; own pass-through; 6-ring counts 6) | DFS longest trail | road.test.ts | ✅ |
 | endTurn rotation + gates (wrongPhase on ended) | hasRolled + resolved-seven | turn.test.ts | ✅ |
@@ -41,18 +41,21 @@ Hermes skill `catan-board-game` — especially `references/base-rules.md` (mecha
 | random-play sim (400 ops incl. knights, conservation, cursor monotonic) | integration heartbeat | turn.test.ts | ✅ |
 | _(wave 3 — trades + dev cards: COMPLETE — spec PASS + quality APPROVED, zero blockers; 142 tests)_ | | | |
 | tradeBank (maritime 4:1) + tradePort (3:1/2:1 own-building) | ratio + portResourceMismatch + noPortThere | trade.test.ts (13) | ✅ |
-| tradeOffer/Accept/Reject (multisets, both-hands revalidation, 7-freeze, endTurn expiry) | pendingTrade lifecycle | trade.test.ts | ✅ |
+| tradeOffer/tradeAccept/tradeReject (multisets, both-hands revalidation, 7-freeze, endTurn expiry) | pendingTrade lifecycle | trade.test.ts | ✅ |
 | buyDevCard (cost to bank, deck top, deckEmpty) | action-phase gate | devcards.test.ts (15) | ✅ |
 | playMonopoly / playRoadBuilding (no chaining) / playYearOfPlenty | production-phase gate, pre-roll ok | devcards.test.ts | ✅ |
 | VP cards immune: no play op, steal/discard resource-only | structural | devcards.test.ts | ✅ |
 | zero-RNG discipline for all wave-3 ops | cursor bit-identical (probed) | probes + tests | ✅ |
 | goldenReplay.simulateGame (greedy bot, independent metaSeed stream, 95/25 conservation per step, determinism+divergence) | wave-4-ready (claimVictory first in priority) | golden.test.ts (4) | ✅ |
-| _(wave 4 — win + VP: implemented, 2-stage review in flight; 159 tests; golden bots reach real 10-VP wins in all 6 seeded games)_ | | | |
-| victoryPoints ledger (sett 1 / city 2 / bonuses 2 current-holder / hidden VP cards 1) | vp.ts pure | vp.test.ts (8) | 🔄 |
-| claimVictory (own turn ≥10, pre-roll ok) + ended lockdown (ALL ops wrongPhase) | victoryInsufficient w/ details | golden.test.ts scripted+6 wins | 🔄 |
-| devBoughtThisTurn counter (double-buy closed; playable = count−bought ≥1) | 5-key defaulted counter | devcards.test.ts (17) | 🔄 |
-| Largest Army completeness (≥3, strict overtake, ties keep, instant transfer) | 4-probe regression | turn.test.ts (28) | 🔄 |
-| redactForSeat | projection purity | redact.test.ts | ⏸ wave 5 |
+| _(wave 4 — win + VP: COMPLETE — spec PASS + quality APPROVED; 159 tests; golden bots reach real 10-VP wins in all 6 seeded games)_ | | | |
+| victoryPoints ledger (sett 1 / city 2 / bonuses 2 current-holder / hidden VP cards 1) | vp.ts pure | vp.test.ts (8) | ✅ |
+| claimVictory (own turn ≥10, pre-roll ok) + ended lockdown (ALL ops wrongPhase) | victoryInsufficient w/ details | golden.test.ts scripted+6 wins | ✅ |
+| devBoughtThisTurn counter (double-buy closed; playable = count−bought ≥1) | 5-key defaulted counter | devcards.test.ts (17) | ✅ |
+| Largest Army completeness (≥3, strict overtake, ties keep, instant transfer) | 4-probe regression | turn.test.ts (28) | ✅ |
+| _(wave 5 — redactForSeat: COMPLETE — spec PASS + quality APPROVED; 170 tests)_ | | | |
+| redactForSeat (composition/devHand-types/deck-order/seed squashed; totals+lengths preserved) | pure projection, schema-valid | redact.test.ts (11 — leakage proof byte-identical, commutativity of 8 own-seat ops strict JSON-equal, idempotence, deep-frozen purity, RangeError) | ✅ |
+| M3 client rule: legalMoves on projection ∉ commutable set (roll/steal/buy/accept server-authoritative) | documented redact.ts header | — (M2/M3 enforce) | ✅ |
+| M2 design note: rollLog+rngCursor brute-forceable → server rebases stream per projection | plan phase 6 | — | ⏸ M2 |
 
 Legend: ✅ verified · 🔄 implementing · ⏸ planned · ❌ rejected-by-review
 

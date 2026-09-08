@@ -48,7 +48,6 @@ export const ActionErrorCodeSchema = z.enum([
   "portResourceMismatch",
   "noPortThere",
   "illegalSetupStage",
-  "pieceNotInStage",
   "victoryInsufficient",
   "badOp",
 ]);

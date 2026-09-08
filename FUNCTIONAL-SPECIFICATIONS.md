@@ -37,7 +37,9 @@ The user-flow contract: what the system DOES from a player's perspective. Stays 
 
 ## 3. Core Game Loop
 
-Per turn: play 1 dev card (optional) → roll dice (animated, server-determined) → production (floating resource tokens to buildings) → if 7: discard >7 hands + mandatory robber move + steal → action phase: trade panel + build buttons (road/settlement/city/dev-card, costs shown, illegal builds disabled with reason tooltip) → end turn. Pass-the-dice turn indicator always visible.
+Per turn: play 1 dev card (optional, **pre-roll legal**) → roll dice (animated, server-determined) → production (floating resource tokens to buildings) → if 7: discard >7 hands (**floor half**, queue front-debtor-only) + mandatory robber move (**must differ from current hex**; desert legal) + steal (random card from a building-occupant w/ cards; robber chooses among multiple) → action phase: trade panel + build buttons (road/settlement/city/dev-card, costs shown, illegal builds disabled with reason tooltip; every gate below is kernel-enforced via `legalMoves`) → end turn. **Setup**: snake placement (round 1 seat 0..n-1, round 2 reversed), second settlement immediately pays 1 of each adjacent terrain; **seat 0 (first placer round 1, last placer round 2) takes the first turn**. Pass-the-dice turn indicator always visible.
+
+Kernel-enforced (170 tests, `packages/shared` 0.5.0): distance rule, own-network connectivity, road **up to** an enemy settlement legal but **starting past one illegal**, 15/5/4 caps, supply exhaustion (multi-affected → none, single → remainder), 2:1 ports type-locked + own-building-required, dev deck 14/5/2/2/2 with bought-this-turn lock (older duplicates playable), one dev/turn, bonus tiles (Longest Route ≥5 — only OPPONENT buildings break; ≥3 knights; strictly-greater transfers; ties keep; drops below threshold return to supply), 10-VP claim on own turn (pre-roll allowed; ended = total lockdown).
 
 Rules authority: the `catan-board-game` skill + official 6th Ed; kernel tests encode every branch (see docs/features/rules-kernel.md).
 
