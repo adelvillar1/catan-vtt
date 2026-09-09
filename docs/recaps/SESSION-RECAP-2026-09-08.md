@@ -102,3 +102,16 @@ JoinPanel auto-uppercased the room code — invite codes are mixed-case `[A-Za-z
 
 ## Unfinished / next
 P1 2-stage reviews in flight (deleg_d71349b3, spec + quality) — disposition + fixes, then **P2: click-to-play interaction** (MovesList buttons → sendOp, vertex/edge click targets for placement, robber drag, seven-window discard modal, trade + dev-card panels), each with its own review + screenshot evidence.
+
+
+---
+
+# Part 5 — P1 quality-review disposition (`6186820`)
+
+Quality review CHANGES-REQUESTED (0 Critical / 8 Important / 9 Minor) — all taken, re-verified (337/337, typecheck 3 projects, vite@8 build, Playwright re-capture `rf-*`):
+- **I-1 worst**: `ws.send()` inside a `setRoom` updater → StrictMode double-invokes updaters → P2 buttons would have sent every op TWICE. `useRoom` rewritten: ref is the source of truth, frames routed OUTSIDE React, `commit()` mirrors pure values into state. (M2's same-tick lesson, React edition.)
+- **I-3/I-17**: drei `<Text>` with no `font` prop suspends the whole-island Suspense on a jsdelivr Roboto fetch → slow/blocked CDN = blank table. Bundled Rubik-Medium (OFL) at `public/fonts/`, `TABLE_FONT` on every Text, per-label Suspense. Capture now records remote requests: **NONE**.
+- **I-8 vacuous test**: "every building resolves" ran on an EMPTY setup record. Fixture now drives the full kernel variable setup through `applyAction`/`legalMoves` (test-only import; AC3 src stays clean) + anti-vacuity `>=6` assertion + unknown-id → null cases.
+- **I-6 white-screen**: unknown vertex/edge ids threw RangeError mid-render (client/server version skew). layout transforms return null, renderers skip, `ErrorBoundary` wraps canvas content.
+- Rejected as designed: length-keyed memo on hexes (rematch-stale trap — memos dropped instead, 19 items/frame is free); client `buildIsland` (would duplicate server geom — forbidden by plan ruling); live-token-rejoin-while-connected (M2 bearer ruling holds).
+- Spec reviewer #2 died at the ceiling with zero findings → re-dispatched on the fixed batch (`deleg_d89df36f`) with an explicit read-budget prompt. **Lesson: after 13 delegation ceiling-hits, review prompts must state a read budget + answer-the-questions-directly shape.**
