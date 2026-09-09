@@ -22,8 +22,8 @@ Related: `docs/architecture/overview.md`, `docs/features/rules-kernel.md`, `pack
 
 | `type` | Fields | Sent when | Server behavior |
 |---|---|---|---|
-| `join` | `roomCode: 6 alphanumerics ([A-Za-z0-9], mixed case)`, `seat?: 0..3`, `seatToken?: string` | Once, immediately after connect | Look up room; bind connection to a seat (see §3). Replies `welcome` on success, `error` on `roomNotFound` / `roomFull` / `inSeatTaken` |
-| `op` | `op: Op` (the kernel `OpSchema`, 20 variants) | Any time the player acts | `OpSchema.parse` → **reject-before-apply** → seat-authority check → `applyAction` on the true state. Emits `event(opApplied \| rejected)` + fresh `projection` |
+| `join` | `roomCode: 6 alphanumerics ([A-Za-z0-9], mixed case)`, `seat?: 0..3`, `seatToken?: string`, `name?: 1..40 chars (claims only; room caps at 24)` | Once, immediately after connect — **one join per connection**; re-join requires a new socket | Look up room; bind connection to a seat (see §3). Replies `welcome` on success, `error` on `roomNotFound` / `roomFull` / `inSeatTaken` |
+| `op` | `op: Op` (the kernel `OpSchema`, 20 variants) | Any time the player acts | `OpSchema.parse` → **reject-before-apply** → seat-authority check → `applyAction` on the true state. Emits `event(opApplied \| rejected)` + fresh `projection`; `rejected` carries kernel `code` + `details` only — server-side message text never rides the wire (it can interpolate client-controlled values) |
 | `ping` | `t: number` | Client keepalive | Replies `pong{t}` verbatim |
 
 Notes:
@@ -92,7 +92,14 @@ Rules:
 - **`serverSeq` is monotone per room.** A gap means the client missed a frame ⇒ **rejoin and
   resync**; never attempt to patch a diff.
 - Every state change re-ships a full `projection`. v1 has no delta/patch frames.
-- A malformed frame ⇒ `error{code:"badMessage"}`; the room keeps running.
+- A malformed frame ⇒ `error{code:"badMessage"}`; the room keeps running. Three
+  consecutive malformed frames drop the peer — and **release its seat**.
+- **One join per connection.** A second `join` on a bound socket ⇒
+  `error{badMessage}`. Changing seats (or upgrading spectator→seat) requires a new
+  connection; rejoining your own seat uses `seatToken` on the new connection.
+  Without this, one socket could churn claims and orphan the lobby (review C1/C2).
+- `gameEnded` ships **before** the final projection of the winning op, so a client
+  syncing on `serverSeq` can never observe `phase:"ended"` before its terminal event.
 
 ---
 
@@ -104,9 +111,9 @@ Rules:
 | Join requesting a taken seat | `error{code:"inSeatTaken"}`; client may re-join with another seat or as spectator |
 | Room at capacity | Seat request ⇒ `error{code:"roomFull"}` (or spectator `welcome{seat:null}`) |
 | Op from a spectator / unseated connection | `error{code:"notSeated"}` |
-| Reconnect with a valid `seatToken` | Re-binds the connection to that seat; no state change, no auto-play |
+| Reconnect with a valid `seatToken` | Re-binds the connection to that seat; no state change, no auto-play. The token is a **bearer credential** in v1 (friends-only threat model): presenting a live token wins the seat even if the old socket is still open; rotation retires it on use, and the superseded socket is fenced (`error{notSeated}` on any op) |
 | Reconnect **without** a token to a seat that has one | Denied; a new `seatToken` is issued only on a legitimate rejoin (the previous token is retired) |
-| Mid-game disconnect | Seat is held briefly; the game **waits** rather than auto-playing for the absent seat |
+| Mid-game disconnect (FIN or stale-sweep) | Seat **releases** to disconnected-but-claimed (rejoin stays possible; a fresh `claimSeat` still says taken). The game **waits** rather than auto-playing for the absent seat |
 
 **No auto-play, ever.** A disconnected seat is never simulated. Frozen states are legitimately
 waited out — notably the **seven-window** (discard queue + robber move) and a **pending trade**:

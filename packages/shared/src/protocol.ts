@@ -52,6 +52,8 @@ export const JoinMsgSchema = z
     roomCode: RoomCodeSchema,
     seat: SeatIndexSchema.optional(),
     seatToken: z.string().optional(),
+    /** Display name (seat claims only); room.ts trims + caps at 24. */
+    name: z.string().min(1).max(40).optional(),
   })
   .strict();
 export type JoinMsg = z.infer<typeof JoinMsgSchema>;

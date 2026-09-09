@@ -45,6 +45,9 @@ interface Client {
   send(obj: unknown): void;
   close(): Promise<void>;
   waitClose(timeoutMs?: number): Promise<void>;
+  /** #14: reject all outstanding waiters (teardown; prevents post-test
+   * unhandled rejections attributed to whoever runs next). */
+  drain(): void;
 }
 
 const open: { clients: Client[]; servers: RoomServer[] } = { clients: [], servers: [] };
@@ -52,6 +55,7 @@ const open: { clients: Client[]; servers: RoomServer[] } = { clients: [], server
 afterEach(async () => {
   for (const c of open.clients.splice(0)) {
     try {
+      c.drain(); // #14: never let an armed waiter reject after teardown
       if (c.ws.readyState === WebSocket.OPEN || c.ws.readyState === WebSocket.CONNECTING) {
         c.ws.close();
       }
@@ -62,6 +66,7 @@ afterEach(async () => {
   for (const s of open.servers.splice(0)) {
     await s.close();
   }
+  CURRENT_SERVER = null; // #11: never leave refresh() synced to a dead server
 });
 
 /** Open a ws client. Every inbound frame is parsed by ServerMsgSchema. */
@@ -74,6 +79,8 @@ async function openClient(port: number): Promise<Client> {
     reject: (e: Error) => void;
     /** Frame index this waiter may start matching from (waitNew sets it). */
     from?: number;
+    /** #12: live timeout handle, cleared on resolve. */
+    timer?: ReturnType<typeof setTimeout>;
   }[] = [];
 
   const c: Client = {
@@ -91,9 +98,9 @@ async function openClient(port: number): Promise<Client> {
       const hit = frames.find(pred);
       if (hit) return Promise.resolve(hit);
       return new Promise<ServerMsg>((resolve, reject) => {
-        const w = { pred, resolve, reject };
+        const w: (typeof waiters)[number] = { pred, resolve, reject };
         waiters.push(w);
-        setTimeout(() => {
+        w.timer = setTimeout(() => {
           const i = waiters.indexOf(w);
           if (i >= 0) waiters.splice(i, 1);
           reject(new Error(`waitFor timeout after ${timeoutMs}ms (${frames.length} frames seen)`));
@@ -103,14 +110,22 @@ async function openClient(port: number): Promise<Client> {
     /** Like waitFor, but ignores frames already received (no stale match). */
     waitNew(pred, timeoutMs = 3000) {
       return new Promise<ServerMsg>((resolve, reject) => {
-        const w = { pred, resolve, reject, from: frames.length };
+        const w: (typeof waiters)[number] = { pred, resolve, reject, from: frames.length };
         waiters.push(w);
-        setTimeout(() => {
+        w.timer = setTimeout(() => {
           const i = waiters.indexOf(w);
           if (i >= 0) waiters.splice(i, 1);
           reject(new Error(`waitNew timeout after ${timeoutMs}ms`));
         }, timeoutMs);
       });
+    },
+    drain() {
+      // Clear every live timeout and drop the waiters. Do NOT reject:
+      // after a test settles, a rejection is just an unhandled-rejection
+      // warning; an unsettled Promise GCs quietly with the client.
+      for (const w of waiters.splice(0)) {
+        if (w.timer !== undefined) clearTimeout(w.timer);
+      }
     },
     sendRaw(text) {
       ws.send(text);
@@ -160,6 +175,7 @@ async function openClient(port: number): Promise<Client> {
       if ((w.from ?? 0) > idx) continue;
       if (w.pred(msg)) {
         waiters.splice(i, 1);
+        if (w.timer !== undefined) clearTimeout(w.timer); // #12
         w.resolve(msg);
       }
     }
@@ -283,6 +299,23 @@ describe("bad frames", () => {
     expect(["error", "event"]).toContain(third.type);
   });
 
+  it("a join may carry a display name (trimmed/capped by room.ts)", async () => {
+    const { port, roomCode, server } = await boot({ seed: 8, playerCount: 3 });
+    const c = await openClient(port);
+    const w = await join(c, roomCode, { seat: 0, name: "  Hector Del Vinar  " });
+    expect(w).toMatchObject({ type: "welcome", seat: 0 });
+    expect(w.type === "welcome" ? w.players[0]!.name : "").toBe("Hector Del Vinar");
+    // Cap: 40 accepted by schema, claimSeat slices to 24.
+    const d = await openClient(port);
+    const w2 = await join(d, roomCode, { seat: 1, name: "x".repeat(40) });
+    expect(w2.type === "welcome" ? w2.players[1]!.name.length : 0).toBe(24);
+    // 41 chars is rejected by the wire schema itself (badMessage, strike).
+    const e = await openClient(port);
+    e.send({ type: "join", roomCode, seat: 2, name: "y".repeat(41) });
+    expect(await e.next("error")).toMatchObject({ code: "badMessage" });
+    void server;
+  });
+
   it("a wrong roomCode is error{roomNotFound}", async () => {
     const { port } = await boot({ seed: 3 });
     const c = await openClient(port);
@@ -291,11 +324,19 @@ describe("bad frames", () => {
   });
 
   it("three consecutive bad frames drop the connection", async () => {
-    const { port } = await boot({ seed: 6 });
+    const { port, roomCode, server } = await boot({ seed: 6, playerCount: 3 });
     const c = await openClient(port);
+    await join(c, roomCode, { seat: 0 }); // strike-drops must release a HELD seat
     for (let i = 0; i < 3; i++) c.sendRaw("}{");
     await c.waitClose(3000);
     expect(c.ws.readyState).toBe(WebSocket.CLOSED);
+    // #4 REGRESSION: the drop must RELEASE the seat (routing the cleanup
+    // through #onClose after close() — the old hand-delete left the later
+    // #onClose early-returning: ghost seat forever).
+    for (let t = 0; t < 100 && server.room.isConnected(0); t++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(server.room.isConnected(0)).toBe(false);
   });
 });
 
@@ -796,33 +837,50 @@ describe("AC5 — wire rejoin", () => {
     expect(await a3.next("error")).toMatchObject({ code: "badToken" });
   });
 
-  it("a second join on one socket REPLACES its first binding (no orphan seats)", async () => {
+  it("a second join on one socket is REJECTED (C1: one-socket lobby DoS)", async () => {
     const { port, roomCode, server } = await boot({ seed: 6, playerCount: 3 });
     const c = await openClient(port);
     const w1 = await join(c, roomCode, { seat: 0 });
-    if (w1.type !== "welcome") throw new Error("unreachable");
+    if (w1.type !== "welcome" || w1.seat !== 0) throw new Error("unreachable");
     await c.next("projection");
-    // Same socket abandons seat 0 and claims seat 1 instead. waitNew:
-    // next("welcome") would match the FIRST welcome still in frames.
+    // Same socket tries to grab more seats — refused, and seat 0 KEEPS its
+    // binding (the old replace-semantics let one socket churn 0->1->2, then
+    // close and orphan every seat as claimed-but-dead: lobby DoS).
     c.send({ type: "join", roomCode, seat: 1 });
-    const w2 = await c.waitNew((m) => m.type === "welcome", 5000);
-    if (w2.type !== "welcome" || w2.seat !== 1) {
-      throw new Error(`second join gave ${JSON.stringify(w2)}`);
-    }
-    // Seat 0 released by the replace (playerLeft broadcast), not orphaned.
-    expect(server.room.isConnected(0)).toBe(false);
-    const left = await c.waitFor(
-      (m) => m.type === "event" && m.kind === "playerLeft",
-      3000,
-    );
-    if (left.type !== "event") throw new Error("unreachable");
-    expect(left.details.seat).toBe(0);
-    // Now CLOSE: seat 1 must release too (the old bug: only ONE released).
+    const er = await c.waitNew((m) => m.type === "error", 5000);
+    expect(er).toMatchObject({ type: "error", code: "badMessage" });
+    expect(server.room.isConnected(0)).toBe(true);
+    expect(server.room.isConnected(1)).toBe(false);
+    // A NEW socket can still claim seat 1 normally.
+    const d = await openClient(port);
+    const w2 = await join(d, roomCode, { seat: 1 });
+    expect(w2).toMatchObject({ type: "welcome", seat: 1 });
+    // Closing the first socket releases ONLY seat 0.
     await c.close();
-    for (let t = 0; t < 100 && server.room.isConnected(1); t++) {
+    for (let t = 0; t < 100 && server.room.isConnected(0); t++) {
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(server.room.isConnected(1)).toBe(false);
+    expect(server.room.isConnected(0)).toBe(false);
+    expect(server.room.isConnected(1)).toBe(true);
+  });
+
+  it("a lobby-hogging socket that churns seats cannot orphan the room (C2)", async () => {
+    const { port, roomCode, server } = await boot({ seed: 1, playerCount: 3 });
+    const a = await openClient(port);
+    await join(a, roomCode, { seat: 0 });
+    a.send({ type: "join", roomCode, seat: 1 }); // rejected
+    a.send({ type: "join", roomCode, seat: 2 }); // rejected
+    await a.close();
+    for (let t = 0; t < 100 && server.room.isConnected(0); t++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    // Seat 0 released to DISCONNECTED (but still claimed by a's token —
+    // rejoin design). A fresh no-seat join lands on the first UNCLAIMED
+    // seat (1) with a playable game, never a spectator-forever lobby.
+    expect(server.room.isConnected(0)).toBe(false);
+    const b = await openClient(port);
+    const w = await join(b, roomCode);
+    expect(w).toMatchObject({ type: "welcome", seat: 1 });
   });
 
   it("a stale token is badToken", async () => {
@@ -1019,7 +1077,7 @@ describe("AC5 — wire rejoin", () => {
     expect(server.room.state.awaitingSeven).not.toBeNull();
     // Resolve the window from the rejoined connection.
     expect(await act(back, back.moves[0]!)).toBe("applied");
-  });
+  }, 60_000); // #13: 400-iteration loop vs default 5s vitest timeout
 });
 
 // ---------------------------------------------------------------------------

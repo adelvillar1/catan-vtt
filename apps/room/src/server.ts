@@ -84,6 +84,9 @@ interface Conn {
 const ROOM_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const DEFAULT_PORT = 4273;
 const DEFAULT_STALE_MS = 60_000;
+// A client that cannot drain 256 KB of queued frames gets silence until it
+// resyncs (serverSeq gap -> rejoin) rather than pinning server memory.
+const MAX_BUFFERED_BYTES = 256 * 1024;
 const MAX_PARSE_FAILS = 3;
 
 /** 6-char [A-Za-z0-9] room code, crypto-random (never Math.random). */
@@ -154,6 +157,16 @@ export class RoomServer {
     this.#sweep = setInterval(() => this.#sweepStale(), period);
     // Unref: the room server must never hold the event loop open by itself.
     this.#sweep.unref?.();
+    // #8: if the port bind fails AFTER construction (ready rejects and the
+    // caller never holds the server to close it), sweep the interval + wss.
+    this.ready.catch(() => {
+      clearInterval(this.#sweep);
+      try {
+        this.#wss.close();
+      } catch {
+        /* never opened */
+      }
+    });
   }
 
   /** Bound port + room code. Throws until `ready` has resolved. */
@@ -204,17 +217,20 @@ export class RoomServer {
 
   #onClose(conn: Conn): void {
     this.#conns.delete(conn);
-    const seat = conn.seat;
-    if (seat === null) return;
-    // Only the CURRENT owner's close disconnects the seat: a rejoin from
-    // another socket re-bound it, and the stale socket must stay silent.
-    if (this.#seatOwner.get(seat) !== conn.ws) return;
-    this.#seatOwner.delete(seat);
-    if (!this.room.isConnected(seat)) return; // already away (e.g. double close)
-    const name = this.room.roster()[seat]?.name ?? null;
-    this.room.disconnect(seat);
-    this.#broadcastEvent("playerLeft", { seat, name });
-    this.#broadcastProjections();
+    // Release EVERY seat this socket owned — not just conn.seat. A socket
+    // that re-joined multiple times leaves earlier bindings behind (quality
+    // review C2: one connect/disconnect cycle could orphan seats forever).
+    let released = false;
+    for (const [seat, owner] of [...this.#seatOwner]) {
+      if (owner !== conn.ws) continue;
+      this.#seatOwner.delete(seat);
+      if (!this.room.isConnected(seat)) continue;
+      const name = this.room.roster()[seat]?.name ?? null;
+      this.room.disconnect(seat);
+      this.#broadcastEvent("playerLeft", { seat, name });
+      released = true;
+    }
+    if (released) this.#broadcastProjections();
   }
 
   #onMessage(conn: Conn, raw: string): void {
@@ -237,7 +253,7 @@ export class RoomServer {
     const msg = parsed.data;
     switch (msg.type) {
       case "join":
-        this.#onJoin(conn, msg.roomCode, msg.seat, msg.seatToken);
+        this.#onJoin(conn, msg.roomCode, msg.seat, msg.seatToken, msg.name);
         return;
       case "op":
         this.#onOp(conn, msg.op);
@@ -259,15 +275,15 @@ export class RoomServer {
     this.#send(conn, { type: "error", code: "badMessage", message: why });
     if (conn.parseFails >= MAX_PARSE_FAILS) {
       // Three consecutive unparsable frames: stop talking to this peer.
-      this.#conns.delete(conn);
-      if (conn.seat !== null && this.#seatOwner.get(conn.seat) === conn.ws) {
-        this.#seatOwner.delete(conn.seat);
-      }
+      // Route through #onClose so the seat is RELEASED (hand-deleting the
+      // owner entry here first would make the later #onClose early-return
+      // and orphan the seat — quality review #4, probe-confirmed).
       try {
         conn.ws.close(1008, "badMessage x3");
       } catch {
         /* already closing */
       }
+      this.#onClose(conn);
     }
   }
 
@@ -275,32 +291,43 @@ export class RoomServer {
   // join / rejoin
   // -------------------------------------------------------------------------
 
-  #onJoin(conn: Conn, roomCode: string, seat: number | undefined, token: string | undefined): void {
+  #onJoin(
+    conn: Conn,
+    roomCode: string,
+    seat: number | undefined,
+    token: string | undefined,
+    name: string | undefined,
+  ): void {
+    // One join per socket: re-joining (even into the same seat) requires a
+    // NEW connection. Without this, one socket can claim seat 0, then 1,
+    // then 2 — each replace only disconnects, never frees the claim — then
+    // close and leave a room where every seat is claimed-by-dead-tokens and
+    // every fresh join is a spectator (quality review C1: one-socket lobby
+    // DoS). Spectator -> seat upgrade also reconnects, same rule.
+    if (conn.bound) {
+      this.#send(conn, {
+        type: "error",
+        code: "badMessage",
+        message: "this connection already joined; open a new connection to change seats",
+      });
+      return;
+    }
     if (roomCode !== this.roomCode) {
       // v1: one room per server, so a wrong code is simply not found.
       this.#send(conn, { type: "error", code: "roomNotFound", message: "no such room" });
       return;
     }
 
-    // One identity per socket: a second join REPLACES the first binding
-    // (spec MINOR 4 — otherwise a socket could accumulate seats and close
-    // would release only the last one, orphaning the others as connected).
-    // `bound` stays true: the socket is still a room member mid-swap, so it
-    // legitimately sees its own playerLeft broadcast.
-    if (conn.seat !== null) {
-      const held = conn.seat;
-      conn.seat = null;
-      if (this.#seatOwner.get(held) === conn.ws) {
-        this.#seatOwner.delete(held);
-        if (this.room.isConnected(held)) {
-          const nm = this.room.roster()[held]?.name ?? null;
-          this.room.disconnect(held);
-          this.#broadcastEvent("playerLeft", { seat: held, name: nm });
-        }
-      }
-    }
+    // One join per socket (C1 above): the binding here can never replace a
+    // previous one; each socket owns at most one seat.
 
     // --- rejoin: token wins over an explicit seat (it IS the identity). ---
+    // seatToken is a BEARER credential in v1 (friends-over-internet threat
+    // model, multiplayer.md §3): whoever presents a live token owns the
+    // seat; each use rotates it, so an eavesdropped token dies on first use.
+    // A live victim is fenced by the owner guard, not by rejecting the
+    // rejoin — rejecting while-connected would break legitimate fast
+    // recovery when the server hasn't seen the FIN yet (quality C5 ruling).
     if (token !== undefined) {
       const rj = this.room.rejoin(token);
       if (!rj.ok) {
@@ -317,9 +344,12 @@ export class RoomServer {
     }
 
     // --- fresh claim ---
-    const claim = this.room.claimSeat(
-      seat === undefined ? { } : { seat },
-    );
+    // name rides claims only (token rejoin keeps the seat's existing name);
+    // claimSeat trims + caps at 24 (protocol pre-caps length at 40).
+    const claim = this.room.claimSeat({
+      ...(seat === undefined ? {} : { seat }),
+      ...(name === undefined ? {} : { name }),
+    });
     if (claim.ok) {
       conn.seat = claim.seat;
       conn.bound = true;
@@ -364,6 +394,9 @@ export class RoomServer {
     };
   }
 
+  // rematch() is NOT on the wire in v1; if it ships, reset #endedSent there
+  // (quality review #9: one-shot gameEnded would suppress the second game's).
+
   // -------------------------------------------------------------------------
   // ops
   // -------------------------------------------------------------------------
@@ -388,11 +421,13 @@ export class RoomServer {
 
     const res = this.room.applyOp(seat, op);
     if (!res.ok) {
+      // Broadcast code + kernel details only. res.message may interpolate
+      // CLIENT-controlled values (e.g. "op.seat 7 ..." from a forged op) —
+      // keep it server-side (event ring / logs), not on the wire (#10).
       this.#broadcastEvent("rejected", {
         seat,
         opType: opTypeOf(op),
         code: res.code,
-        message: res.message,
         ...("details" in res ? { details: res.details } : {}),
       });
       return;
@@ -436,7 +471,17 @@ export class RoomServer {
 
   #send(conn: Conn, msg: ServerMsg): void {
     if (conn.ws.readyState !== WebSocket.OPEN) return;
-    conn.ws.send(JSON.stringify(msg));
+    // Backpressure: a client that can't drain its send buffer stops being
+    // fed (it will resync via the serverSeq-gap rejoin path) instead of
+    // pinning memory on the server. (quality review #6)
+    if (conn.ws.bufferedAmount > MAX_BUFFERED_BYTES) return;
+    try {
+      conn.ws.send(JSON.stringify(msg));
+    } catch {
+      /* CLOSING/destroyed socket: drop this frame; 'close' cleans up.
+         The try/catch also keeps ONE dead peer from aborting the whole
+         broadcast loop and silently losing every remaining recipient. */
+    }
   }
 
   #projectionFor(conn: Conn): Projection {
