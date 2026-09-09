@@ -1,0 +1,280 @@
+/* table.css — dark table UI. No framework, no build step beyond Vite. */
+
+:root {
+  --bg: #071726;
+  --panel: rgba(10, 25, 40, 0.92);
+  --panel-border: rgba(120, 170, 210, 0.18);
+  --text: #e8e6df;
+  --muted: #93a4b4;
+  --accent: #4da3ff;
+  --accent-dim: #24506f;
+  --danger: #ff6b5e;
+  --ok: #62d19a;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- layout */
+
+.table-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.table-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.table-rail {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 300px;
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  backdrop-filter: blur(6px);
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------------------- join */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.field > label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.field input,
+.field select {
+  background: rgba(4, 14, 24, 0.9);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: var(--accent);
+}
+
+.field input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.join-row {
+  display: flex;
+  gap: 8px;
+}
+
+.join-row .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.error {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--danger);
+  word-break: break-word;
+}
+
+/* --------------------------------------------------------------- buttons */
+
+button {
+  font: inherit;
+  border-radius: 6px;
+  border: 1px solid var(--accent-dim);
+  background: var(--accent-dim);
+  color: var(--text);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.btn-primary {
+  width: 100%;
+  background: #1d6fb8;
+  border-color: #2b88d8;
+  font-weight: 600;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: var(--panel-border);
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- status */
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.kv > span:first-child {
+  color: var(--muted);
+}
+
+.kv > span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+.seat-chip {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.status-ok {
+  color: var(--ok);
+}
+.status-warn {
+  color: #ffcf6b;
+}
+.status-bad {
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- moves */
+
+.moves {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 32vh;
+  overflow-y: auto;
+}
+
+.moves li {
+  display: block;
+}
+
+.moves button {
+  width: 100%;
+  text-align: left;
+  background: rgba(4, 14, 24, 0.7);
+  border-color: var(--panel-border);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.moves .detail {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------- ticker */
+
+.ticker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ticker li {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ticker .seq {
+  color: #5f7d95;
+  margin-right: 6px;
+}
+
+/* ---------------------------------------------------------- empty state */
+
+.empty {
+  position: absolute;
+  left: 50%;
+  bottom: 14%;
+  transform: translateX(-50%);
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.empty strong {
+  display: block;
+  font-size: 18px;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
