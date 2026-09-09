@@ -167,3 +167,48 @@ combinations (multisetCombinations — could be hundreds), `moveRobber` for ever
 `stealCard` per hand-holding victim (turn.ts:1408-1443). The discard UI must pick cards and
 submit one of the shipped lists (TradePanel precedent), not fabricate.
 
+
+---
+
+## Part 7 — P2(b1): click the ISLAND (salvage #3, quality-gated, shipped)
+
+`deleg_514348b0` (hy4) died at the 1800s ceiling with 87 API calls — the most productive
+salvage yet: all code, 11 tests, tsc + build green, killed mid-browser-evidence. Parent
+completed its click proof in a live stack (room `lxjT9G`): 47 ghosts, click at the projected
+screen pos of a vertex ghost → `serverSeq 4→5`, `rejected=false`, orbit-drag advances nothing,
+zero page errors. Vision-confirmed both stills.
+
+Parent hardening pre-review: extracted `discardCombinationKeys`/`discardCardsKey` into pure
+`targetSet.ts` (the modal's legality logic now has a tested surface), `mayActOnBoard` invariant
+with a documented tripwire, dead exports removed. Caught myself labeling changes "review I-1"
+when the reviewer had not reported yet — reworded; **never cite findings from a review that
+hasn't landed** (the previous review dispatch `deleg_c6c322c4` had no transcript dir at all —
+apparently never dispatched; lesson: verify a child is live via its transcript dir before
+counting it as in-flight).
+
+Discard-modal BROWSER proof honestly failed six stack attempts (bots swept for idleness while
+the browser drove; no seat-2 seven within budget). The captured 03-discard.png showed a failed
+drive, not the modal — DELETED rather than committed misleading evidence; deferred to P3's
+full-game demo. The modal's logic stays unit-proven (kernel-exact multiset-count assertion).
+
+Quality `deleg_03bb0347` (completed 1598s): CHANGES-REQUESTED, 0 Critical / 2 Important.
+I-1 cursor leak — R3F's removeInteractivity drops the mesh from its hover map WITHOUT firing
+onPointerOut, so the normal click-applies path left the pointer cursor stuck. Fixed by clamping
+`hovered` to this frame's live targets; re-ran the browser proof — cursor asserts green (now
+asserted, not printed: reviewer minor m-7). I-2 the mustMoveRobber drive had silent `break`
+paths — added an `asserted` flag; reviewer's own /tmp probe confirmed the window is reached.
+mayActOnBoard's roller-gate CONFIRMED sound vs turn.ts (currentSeat can differ from roller
+during an unresolved 7). Minor gold: reviewer claimed the hex ghost yaw was wrong and quoted
+`[-PI/2,0,0]` from the token ring — recomputed both rotations myself: Hex.tsx uses
+[0, POINTY_TOP_YAW=PI/6, 0] for the same cylinder geometry, so PI/6 is the correct alignment
+for a ghost over a tile. The reviewer was right that a mismatch existed, wrong about the value;
+re-derive, don't copy (m-6).
+
+Also: 20-op full-vocabulary sweep test tripwires placementSlot's default:null for future ops;
+DiscardModal reset key = window identity (debtor:count, hidden=null), not just count; stack
+pkill scoped to catan paths; discard script exits green ONLY if the modal was actually seen.
+
+Shipped: 8a15665 + 374fa8c + 0101100. 372/372, typecheck 0, build 266ms, click-PASS x2.
+M3 state: P1 done, P2(a) done, P2(b1) done. Remaining: P3 (robber-flow polish, full-game
+setup→10VP browser demo incl. discard pixels, rematch + victory, cinematic), P4 (evidence +
+docs close-out).

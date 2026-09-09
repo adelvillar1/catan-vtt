@@ -10,4 +10,16 @@
 - **npm quirk on this machine:** global config sets `omit=dev`; project `.npmrc` (`include=dev`) cancels it. Root scripts call workspace binaries directly — nested `npm run` inside an npm script hangs here (docs/TROUBLESHOOTING.md).
 - **Delegation pin:** `hy4-preview` (workbuddy proxy :8787) — user's PRIMARY; kimi k3 (:10100) hit a 5h quota window; GLM-5.2 (:8787) verified spare. 30-min ceiling, split/steer/surgical-finish as needed.
 - **Copyright guard:** rulebook text/art must never enter the repo (hard rule in CLAUDE.md); the `catan-board-game` skill is the rules authority (patched with this session's corrected rulings).
-- Next refresh: M3 P2(b) (3D targets) landing.
+- **2026-09-09 (M3 P2(b1) DONE, double-gated):** Click THE ISLAND — targetSet.ts (pure ghost projection from
+  shipped legalMoves + discardCombinationKeys single-source) + Targets.tsx (interactive vertex/edge/hex ghosts,
+  hover clamp, localStorage catan:e2eTargets hook) + DiscardModal.tsx (combination-legality picker) + App
+  mayActOnBoard gating. Browser proof run TWICE post-gating (47 ghosts, canvas click seq 4->5, no rejection,
+  orbit drag no-op, cursor asserts green). Quality review deleg_03bb0347: 2 Important (I-1 cursor leak via
+  R3F removeInteractivity-no-onPointerOut — fixed + proven; I-2 vacuous-break drive — anti-vacuity flag;
+  mayActOnBoard roller-gate CONFIRMED vs turn.ts), 5 minors incl. hex-ghost 30-degree alignment (reviewer's
+  yaw value was wrong — recomputed from Hex.tsx, PI/6 is correct). 372/372, typecheck 0, build 266ms.
+  Commits 8a15665 + 374fa8c + 0101100.
+- **Discard-modal BROWSER proof deferred to P3** (six stack attempts, no seat-2 seven in script budget; logic
+  unit-covered via pure helpers + kernel-exact multiset count). 03-discard.png deleted as misleading.
+- Next refresh: M3 P3 (robber steal-flow polish, full-game demo setup->10VP incl. discard-modal pixels,
+  rematch + victory screen).
