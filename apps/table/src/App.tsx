@@ -6,15 +6,18 @@
  * empty table (dim water + caption). The overlay reads the same hook and
  * never computes legality — the move list is the server's, verbatim.
  */
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { IslandTopology } from "@catan-vtt/shared";
 import { Island } from "./scene/Island.js";
+import { Targets } from "./scene/Targets.js";
+import { buildTargetSet, mayActOnBoard } from "./scene/targetSet.js";
 import { boardCenterWorld, boardRadius, HEX_DEPTH, HEIGHTS } from "./scene/geom.js";
 import { TABLE_BG, WATER_COLOR } from "./scene/palette.js";
 import { useRoom } from "./wire/useRoom.js";
 import { JoinPanel } from "./ui/JoinPanel.js";
+import { DiscardModal } from "./ui/DiscardModal.js";
 import { ErrorBoundary } from "./ui/ErrorBoundary.js";
 import { StatusLine } from "./ui/StatusLine.js";
 import { MovesList } from "./ui/MovesList.js";
@@ -67,6 +70,26 @@ export function App(): React.JSX.Element {
 
   const topology: IslandTopology | null = state?.config.topology ?? null;
 
+  // On-canvas click targets — a pure projection of the server's legalMoves
+  // (targetSet.ts). Keyed on legalMoves identity, which the adapter replaces
+  // exactly once per projection, so this recomputes once per server frame.
+  const targets = useMemo(() => buildTargetSet(room.legalMoves, topology), [room.legalMoves, topology]);
+
+  // Ghosts show ONLY when this client can actually act: a live projection,
+  // a PLAYING socket ("open" per the task = the room's live status string),
+  // a real seat (spectators get none), and it being that seat's turn. The
+  // DOM MovesList stays the unconditional accessibility fallback.
+  // mayActOnBoard states the seven-window actor explicitly (see targetSet
+  // docstring): today it agrees with currentSeat because the wire's
+  // seat-scoped legalMoves already scopes ghosts — the gate is the loud-
+  // failure tripwire for that invariant (parent hardening, pre-review).
+  const canAct =
+    state !== null &&
+    room.seat !== null &&
+    room.room.status === "playing" &&
+    mayActOnBoard(state, room.seat);
+  const showTargets = canAct && targets.length > 0;
+
   // No memo: keyed on topology identity it would never hit (review I-5), and
   // buildIsland() client-side would duplicate the SERVER's geometry — the
   // radius derives from the shipped topology (54 points; per-frame is free).
@@ -98,6 +121,12 @@ export function App(): React.JSX.Element {
 
         <Suspense fallback={null}>
           {state === null ? <EmptyTable /> : <Island state={state} />}
+          {/* On-canvas placement ghosts (M3-P2(b1)). Rendered INSIDE the
+              Canvas so R3F's raycaster owns the hit test; OrbitControls still
+              gets every pointer event that is not on a ghost. */}
+          {showTargets && room.seat !== null ? (
+            <Targets targets={targets} seat={room.seat} onPick={(op) => room.sendOp(op)} />
+          ) : null}
         </Suspense>
         </ErrorBoundary>
       </Canvas>
@@ -128,6 +157,18 @@ export function App(): React.JSX.Element {
         <MovesList moves={room.legalMoves} connected={state !== null} onSend={room.sendOp} />
         <EventTicker events={room.room.events} />
       </aside>
+
+      {/* Seven-discard gate. Rendered ABOVE the canvas (DOM, not 3D) because
+          it needs real form controls; appears iff the server says this seat
+          is the one that owes cards right now. */}
+      {state === null ? null : (
+        <DiscardModal
+          state={state}
+          seat={room.seat}
+          legalMoves={room.legalMoves}
+          sendOp={room.sendOp}
+        />
+      )}
     </div>
   );
 }
