@@ -1,16 +1,21 @@
 /**
  * useRoom.ts — the table's ONLY door to the room server.
  *
- * Wire discipline (copied from apps/room/src/cli.ts, which is the working
- * reference client):
+ * Wire discipline (copied from apps/room/src/cli.ts, the reference client):
  *  - every inbound frame → ServerMsgSchema.safeParse (via routeRawFrame);
  *    a violation is console.error + close + status "error", never a shrug;
  *  - the client NEVER computes legality. It renders the server's legalMoves
- *    and sends ops verbatim. No import of applyAction / legalMoves /
- *    redactForSeat anywhere in apps/table (plan AC3, grep-provable).
+ *    and sends ops verbatim. No applyAction/legalMoves/redactForSeat import
+ *    anywhere in apps/table (plan AC3, grep-provable).
+ *
+ * STATE SHAPE (review I-1): React StrictMode double-invokes updater
+ * functions, so ws.send() must NEVER run inside a setRoom(prev => ...)
+ * updater — ops would hit the wire twice. The ref is the source of truth:
+ * frames are routed against it OUTSIDE React, and setState only mirrors.
  *
  * seatToken lives in localStorage keyed by room code and is OVERWRITTEN on
- * every welcome — the server rotates it on each join/rejoin.
+ * every welcome — the server rotates it on each join/rejoin. "Leave room"
+ * forgets it (I-10): you are not planning to rejoin the seat you just left.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GameState, Op } from "@catan-vtt/shared";
@@ -36,132 +41,160 @@ export interface UseRoom {
   state: GameState | null;
   legalMoves: Op[];
   seat: number | null;
-  /** Open the socket and send a join. No-op once a socket is live. */
-  connect(req: JoinRequest): void;
-  /** Send an op. Requires a projection (never acts on a stale/absent move list). */
-  sendOp(op: Op): void;
-  /** Close the socket and drop back to idle. */
+  /**
+   * Open a socket (to `req.url ?? hook url`) and join. No-op once a socket
+   * is live — the server allows exactly one join per socket. Returns false
+   * when nothing was sent (already connected or bad url).
+   */
+  connect(req: JoinRequest & { url?: string }): boolean;
+  /**
+   * Send an op. Requires an OPEN socket AND a live projection (never act
+   * on a stale/absent move list). Returns false (and warns) when dropped —
+   * the UI surfaces it (I-2: no silent drops).
+   */
+  sendOp(op: Op): boolean;
+  /** Close the socket, drop the token, and return to idle. */
   disconnect(): void;
-  /** URL actually in use (VITE_ROOM_URL ?? default). */
+  /** URL currently in use (VITE_ROOM_URL ?? default) for display. */
   url: string;
 }
 
-/**
- * Open a single WebSocket to the room server.
- *
- * One socket per hook instance; the room server allows exactly one join per
- * socket, so a rejoin means a new socket (or a fresh mount).
- */
 export function useRoom(roomUrl?: string): UseRoom {
   const url = useMemo(
-    () => roomUrl ?? import.meta.env.VITE_ROOM_URL ?? DEFAULT_ROOM_URL,
+    () => roomUrl && roomUrl.trim() !== "" ? roomUrl : import.meta.env.VITE_ROOM_URL ?? DEFAULT_ROOM_URL,
     [roomUrl],
   );
   const [room, setRoom] = useState<RoomState>(initialRoomState);
+  const stateRef = useRef<RoomState>(room);
   const wsRef = useRef<WebSocket | null>(null);
-  /** Room code of the live socket, so we can clear its token on teardown. */
+  /** Room code of the live socket (for token clearing on leave). */
   const roomCodeRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  mountedRef.current = true;
 
-  const disconnect = useCallback(() => {
+  /** Mirror the ref into React state (pure setState value, never an updater). */
+  const commit = useCallback((next: RoomState): void => {
+    stateRef.current = next;
+    if (mountedRef.current) setRoom(next);
+  }, []);
+
+  const disconnect = useCallback((): void => {
     const ws = wsRef.current;
     wsRef.current = null;
+    if (roomCodeRef.current !== null) {
+      forgetSeatToken(roomCodeRef.current); // "leave" = not coming back to this seat
+      roomCodeRef.current = null;
+    }
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       ws.close(1000, "client disconnect");
     }
-    setRoom((prev) => ({ ...prev, status: "closed" }));
-  }, []);
+    commit({ ...stateRef.current, status: "closed" });
+  }, [commit]);
 
   const connect = useCallback(
-    (req: JoinRequest) => {
-      if (wsRef.current) return; // already live — one join per socket
-      setRoom((prev) => ({ ...prev, status: "connecting", error: null, fatal: false }));
+    (req: JoinRequest & { url?: string }): boolean => {
+      if (wsRef.current !== null) return false; // already live — one join per socket
+      const target = req.url && req.url.trim() !== "" ? req.url : url;
 
       // Rotation-aware: reuse the stored token if the caller didn't supply one.
       const stored = req.seatToken ?? safeReadSeatToken(req.roomCode);
-      const joinReq: JoinRequest = { ...req, ...(stored ? { seatToken: stored } : {}) };
+      const { url: _omit, ...joinReq }: JoinRequest & { url?: string } = req;
+      void _omit;
 
       let ws: WebSocket;
       try {
-        ws = new WebSocket(url);
+        ws = new WebSocket(target);
       } catch (err) {
-        setRoom((prev) => ({
-          ...prev,
+        commit({
+          ...stateRef.current,
           status: "error",
           error: { code: "socket", message: `connect failed: ${String(err)}` },
-        }));
-        return;
+        });
+        return false;
       }
+      commit({ ...stateRef.current, status: "connecting", error: null, fatal: false });
       wsRef.current = ws;
       roomCodeRef.current = req.roomCode;
 
       ws.addEventListener("open", () => {
-        setRoom((prev) => ({ ...prev, status: "joining" }));
-        ws.send(encodeClientMessage(buildJoinMessage(joinReq)));
+        commit({ ...stateRef.current, status: "joining" });
+        ws.send(encodeClientMessage(buildJoinMessage({ ...joinReq, ...(stored ? { seatToken: stored } : {}) })));
       });
 
       ws.addEventListener("message", (ev: MessageEvent<unknown>) => {
-        const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
-        setRoom((prev) => {
-          const next = routeRawFrame(prev, raw);
-          if (next.fatal) {
-            // Parse-or-die: log, then close. Same reflex as cli.ts #die().
-            console.error(`[useRoom] fatal frame — closing socket. ${next.error?.message ?? ""}`);
-            queueMicrotask(() => ws.close(4002, "bad frame"));
-          }
-          // Persist the (rotated) token on every welcome.
-          if (next.welcome?.seatToken && next.welcome.roomCode) {
-            safeStoreSeatToken(next.welcome.roomCode, next.welcome.seatToken);
-          }
-          return next;
-        });
+        const raw = typeof ev.data === "string" ? String(ev.data) : String(ev.data);
+        // Route OUTSIDE the updater: updaters must stay pure (StrictMode).
+        const next = routeRawFrame(stateRef.current, raw);
+        if (next.fatal) {
+          // Parse-or-die: log once, close once. Same reflex as cli.ts #die().
+          console.error(`[useRoom] fatal frame — closing socket. ${next.error?.message ?? ""}`);
+          ws.close(4002, "bad frame");
+        }
+        if (next.welcome?.seatToken && next.welcome.roomCode) {
+          safeStoreSeatToken(next.welcome.roomCode, next.welcome.seatToken);
+        }
+        commit(next);
       });
 
       ws.addEventListener("error", () => {
-        setRoom((prev) => ({
-          ...prev,
+        commit({
+          ...stateRef.current,
           status: "error",
-          error: { code: "socket", message: `socket error on ${url}` },
-        }));
+          error: { code: "socket", message: `socket error on ${target}` },
+        });
       });
 
       ws.addEventListener("close", (ev: CloseEvent) => {
         wsRef.current = null;
-        setRoom((prev) => ({
+        const prev = stateRef.current;
+        commit({
           ...prev,
           status: prev.status === "error" ? prev.status : "closed",
-          ...(prev.status === "error"
+          ...(prev.status === "error" || prev.error !== null
             ? {}
             : {
-                error: prev.error ?? {
+                error: {
                   code: "socket" as const,
                   message: `closed (code ${ev.code}${ev.reason ? `, ${ev.reason}` : ""})`,
                 },
               }),
-        }));
+        });
       });
+      return true;
     },
-    [url],
+    [url, commit],
   );
 
-  const sendOp = useCallback((op: Op) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    setRoom((prev) => {
-      // Never act on a stale/absent move list: ops are only emitted once the
-      // server has shipped a projection.
-      if (!prev.projection) return prev;
+  const sendOp = useCallback(
+    (op: Op): boolean => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn("[useRoom] sendOp dropped: socket not open");
+        return false;
+      }
+      if (!stateRef.current.projection) {
+        console.warn("[useRoom] sendOp dropped: no projection yet");
+        return false;
+      }
+      // Plain statement — never inside a setRoom updater (StrictMode I-1).
       ws.send(encodeClientMessage(buildOpMessage(op)));
-      return prev;
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      wsRef.current?.close(1000, "unmount");
-      wsRef.current = null;
+      return true;
     },
     [],
   );
+
+  // Unmount: stop commits, close the socket. (commit() is mounted-guarded, so
+  // the late close/error listener callbacks can never setState after unmount.)
+  // Setup MUST re-arm the flag: StrictMode simulates unmount+remount in dev,
+  // and a one-way latch would leave the app frozen after the second mount.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      wsRef.current?.close(1000, "unmount");
+      wsRef.current = null;
+    };
+  }, []);
 
   return {
     room,

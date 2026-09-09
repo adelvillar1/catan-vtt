@@ -33,8 +33,11 @@ export function EventTicker({ events }: EventTickerProps): React.JSX.Element {
         <p className="hint">No events yet.</p>
       ) : (
         <ul className="ticker">
-          {[...events].reverse().map((e, i) => (
-            <li key={`${e.serverSeq}:${e.kind}:${i}`}>
+          {[...events].reverse().map((e) => (
+            // Stable key (review i-12): serverSeq is unique per event — the
+            // old key included the REVERSED INDEX, so every ring shift
+            // re-keyed (remounted) all rows.
+            <li key={`${e.serverSeq}:${e.kind}`}>
               <span className="seq">[{e.serverSeq}]</span>
               {e.kind}
               {seatOf(e.details) !== "" ? ` · ${seatOf(e.details)}` : ""}

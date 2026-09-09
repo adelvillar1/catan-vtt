@@ -72,6 +72,15 @@ describe("hex center alignment — scene frame == vertexCoords frame", () => {
       }
       expect(corners).toHaveLength(6);
       expect(topoSet).toHaveLength(6);
+      // Bijection (review minor i15): both sets are 6 long and corners match
+      // INTO topoSet — require the reverse too, so a duplicated corner
+      // (e.g. two equal offsets after a sign typo) can't pass by collision.
+      for (const [tx, ty] of topoSet) {
+        const hit = corners.find(([cx, cy]) => Math.abs(tx - cx) < EPS && Math.abs(ty - cy) < EPS);
+        expect(hit, `vertexCoord (${tx}, ${ty}) matched by no derived corner of ${id}`).toBeDefined();
+      }
+      // Distinctness of derived corners themselves:
+      expect(new Set(corners.map(([x, y]) => `${x.toFixed(6)},${y.toFixed(6)}`)).size).toBe(6);
     },
   );
 

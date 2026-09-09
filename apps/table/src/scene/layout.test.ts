@@ -15,10 +15,13 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  applyAction,
   buildIsland,
+  legalMoves,
   variableSetup,
   type GameState,
   type IslandTopology,
+  type Op,
 } from "@catan-vtt/shared";
 import {
   boardCenterWorld,
@@ -41,7 +44,40 @@ import {
 } from "./layout.js";
 
 const topo: IslandTopology = buildIsland();
-const state: GameState = variableSetup(20260908, { playerCount: 3 });
+const freshState: GameState = variableSetup(20260908, { playerCount: 3 });
+
+/**
+ * Drive the FULL variable setup (2 settlements + roads per seat, snake order)
+ * through the kernel so buildings/roads are populated. legalMoves is used
+ * HERE ONLY — this file is a test of placement math against the kernel's own
+ * idea of where pieces may go; apps/table ships nothing legality-related
+ * (plan AC3 governs src, not tests; the geom tests already import buildIsland).
+ */
+function playSetup(): GameState {
+  let st = freshState;
+  let seat = 0;
+  for (let guard = 0; guard < 64; guard++) {
+    const moves = legalMoves(st, seat).filter(
+      (m): m is Extract<Op, { type: "placeSetupPiece" }> => m.type === "placeSetupPiece",
+    );
+    if (moves.length === 0) {
+      if (st.phase !== "setup") break; // setup complete
+      // phase still setup but this seat has nothing to place — rotate
+      seat = (seat + 1) % 3;
+      continue;
+    }
+    st = applyAction(st, moves[0]!);
+    seat = st.currentSeat;
+  }
+  return st;
+}
+const state: GameState = playSetup();
+
+/** Unwrap a transform for ids we KNOW exist — null now means a regression. */
+function need<T>(t: T | null): T {
+  if (t === null) throw new Error("transform returned null for a VALID id");
+  return t;
+}
 
 /** Exact-equality budget for anything copied straight out of vertexCoords. */
 const EPS = 1e-9;
@@ -53,7 +89,7 @@ describe("building placement", () => {
 
   it("every settlement sits exactly on its vertex and above the land prism", () => {
     for (const vid of vertexIds) {
-      const t = buildingTransform(topo, vid, "settlement");
+      const t = need(buildingTransform(topo, vid, "settlement"));
       const [vx, vy, vz] = vertexWorld(topo, vid);
       expect(t.position[0]).toBeCloseTo(vx, 12);
       expect(Math.abs(t.position[0] - vx)).toBeLessThan(EPS);
@@ -68,8 +104,8 @@ describe("building placement", () => {
 
   it("a city is wider and taller than a settlement and shares its origin", () => {
     const vid = vertexIds[0]!;
-    const s = buildingTransform(topo, vid, "settlement");
-    const c = buildingTransform(topo, vid, "city");
+    const s = need(buildingTransform(topo, vid, "settlement"));
+    const c = need(buildingTransform(topo, vid, "city"));
     expect(c.position).toEqual(s.position);
     expect(BUILDING_WIDTH.city).toBeGreaterThan(BUILDING_WIDTH.settlement);
     expect(buildingHeight("city")).toBeGreaterThan(0);
@@ -78,7 +114,7 @@ describe("building placement", () => {
 
   it("buildingHeight == body + roof, and the parts stack inside that height", () => {
     for (const kind of ["settlement", "city"] as const) {
-      const t = buildingTransform(topo, vertexIds[0]!, kind);
+      const t = need(buildingTransform(topo, vertexIds[0]!, kind));
       expect(t.height).toBeCloseTo(buildingHeight(kind), 12);
       expect(t.bodyHeight + t.roofHeight).toBeCloseTo(t.height, 12);
       expect(t.bodyHeight).toBeLessThan(t.height);
@@ -89,7 +125,7 @@ describe("building placement", () => {
   it("no two buildings share a position (distinct vertices → distinct spots)", () => {
     const seen = new Set<string>();
     for (const vid of vertexIds) {
-      const t = buildingTransform(topo, vid, "settlement");
+      const t = need(buildingTransform(topo, vid, "settlement"));
       const key = `${t.position[0].toFixed(6)}|${t.position[2].toFixed(6)}`;
       expect(seen.has(key), `duplicate building position at ${vid}`).toBe(false);
       seen.add(key);
@@ -101,7 +137,7 @@ describe("building placement", () => {
 describe("road placement", () => {
   it("every edge's slab reconstructs the true a→b endpoints", () => {
     for (const edge of topo.edges) {
-      const t = roadTransform(topo, edge.id);
+      const t = need(roadTransform(topo, edge.id));
       const yaw = t.rotation[1];
       const halfLen = t.edgeLength / 2; // FULL edge length: the trim only
       // shortens the drawn box, it must not move the endpoints.
@@ -127,7 +163,7 @@ describe("road placement", () => {
 
   it("the slab midpoint is the edge midpoint, at road height", () => {
     for (const edge of topo.edges.slice(0, 72)) {
-      const t = roadTransform(topo, edge.id);
+      const t = need(roadTransform(topo, edge.id));
       const { a, b } = edgeSegment(topo, edge.id, HEIGHTS.road);
       expect(t.position[1]).toBe(HEIGHTS.road);
       expect(t.position[0]).toBeCloseTo((a[0] + b[0]) / 2, 12);
@@ -137,7 +173,7 @@ describe("road placement", () => {
 
   it("drawn length is the true length minus the corner trim", () => {
     for (const edge of topo.edges) {
-      const t = roadTransform(topo, edge.id);
+      const t = need(roadTransform(topo, edge.id));
       expect(t.edgeLength).toBeCloseTo(1, 5);
       expect(t.length).toBeCloseTo(t.edgeLength - ROAD_TRIM, 12);
       expect(t.scale[0]).toBeCloseTo(t.length, 12);
@@ -148,7 +184,7 @@ describe("road placement", () => {
 
   it("a road's yaw is stable for a→b and the slab stays inside its edge", () => {
     const edge = topo.edges[0]!;
-    const t = roadTransform(topo, edge.id);
+    const t = need(roadTransform(topo, edge.id));
     const rebuilt = planarDistance(t.a, t.b);
     expect(rebuilt).toBeCloseTo(t.edgeLength, 6);
   });
@@ -190,7 +226,7 @@ describe("port placement", () => {
   it("all 9 markers sit exactly on their coastal vertex", () => {
     expect(state.config.ports).toHaveLength(9);
     for (const port of state.config.ports) {
-      const t = portTransform(topo, port);
+      const t = need(portTransform(topo, port));
       const [vx, vy, vz] = vertexWorld(topo, port.vertexId);
       expect(Math.abs(t.markerPosition[0] - vx)).toBeLessThan(EPS);
       expect(Math.abs(t.markerPosition[2] - vz)).toBeLessThan(EPS);
@@ -203,7 +239,7 @@ describe("port placement", () => {
   it("labels are nudged radially outward, away from the island center", () => {
     const [cx, cz] = boardCenterWorld();
     for (const port of state.config.ports) {
-      const t = portTransform(topo, port);
+      const t = need(portTransform(topo, port));
       const [vx, , vz] = vertexWorld(topo, port.vertexId);
       const dMarker = Math.hypot(vx - cx, vz - cz);
       const dLabel = Math.hypot(t.labelPosition[0] - cx, t.labelPosition[2] - cz);
@@ -224,8 +260,14 @@ describe("port placement", () => {
 });
 
 describe("scene derives only from projection state", () => {
+  it("the setup fixture is NOT empty (test would fail vacuously)", () => {
+    // Review I-8: this loop ran on variableSetup()'s EMPTY records and always
+    // passed. With playSetup() it must have real pieces:
+    expect(Object.keys(state.buildings).length).toBeGreaterThanOrEqual(6);
+    expect(Object.keys(state.roads).length).toBeGreaterThanOrEqual(6);
+  });
+
   it("every building/road id in a live state resolves through geom", () => {
-    // Sanity on the fixture we ship: the renderer maps these same records.
     for (const vid of Object.keys(state.buildings)) {
       const [x, y, z] = vertexWorld(topo, vid);
       expect(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)).toBe(true);
@@ -234,5 +276,19 @@ describe("scene derives only from projection state", () => {
       const { a, b } = edgeSegment(topo, eid);
       expect(Number.isFinite(a[0]) && Number.isFinite(b[0])).toBe(true);
     }
+    // And every one survives the null-guarded transform path the renderers
+    // actually use:
+    for (const [vid, b] of Object.entries(state.buildings)) {
+      expect(buildingTransform(topo, vid, (b as { kind: "settlement" | "city" }).kind)).not.toBeNull();
+    }
+    for (const eid of Object.keys(state.roads)) {
+      expect(roadTransform(topo, eid)).not.toBeNull();
+    }
+  });
+
+  it("unknown ids return null (reviewers' white-screen guard, I-6)", () => {
+    expect(buildingTransform(topo, "v:99,99", "settlement")).toBeNull();
+    expect(roadTransform(topo, "e:9|9")).toBeNull();
+    expect(portTransform(topo, { vertexId: "v:99,99", type: "generic" })).toBeNull();
   });
 });

@@ -31,6 +31,7 @@ export function JoinPanel({ room }: JoinPanelProps): React.JSX.Element {
     if (!canJoin) return;
     room.connect({
       roomCode: code,
+      url, // the field is real: useRoom opens to THIS url (I-7)
       ...(seat === "" ? {} : { seat: Number(seat) }),
       ...(name.trim() === "" ? {} : { name: name.trim() }),
     });
@@ -102,8 +103,10 @@ export function JoinPanel({ room }: JoinPanelProps): React.JSX.Element {
           type="button"
           className="btn-ghost"
           onClick={() => {
-            room.disconnect();
+            room.disconnect(); // also forgets the rotated seatToken
             setCode("");
+            setName("");
+            setSeat("");
           }}
         >
           Leave room

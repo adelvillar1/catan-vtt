@@ -6,7 +6,7 @@
  * empty table (dim water + caption). The overlay reads the same hook and
  * never computes legality — the move list is the server's, verbatim.
  */
-import { Suspense, useMemo } from "react";
+import { Suspense } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { IslandTopology } from "@catan-vtt/shared";
@@ -15,6 +15,7 @@ import { boardCenterWorld, boardRadius, HEX_DEPTH, HEIGHTS } from "./scene/geom.
 import { TABLE_BG, WATER_COLOR } from "./scene/palette.js";
 import { useRoom } from "./wire/useRoom.js";
 import { JoinPanel } from "./ui/JoinPanel.js";
+import { ErrorBoundary } from "./ui/ErrorBoundary.js";
 import { StatusLine } from "./ui/StatusLine.js";
 import { MovesList } from "./ui/MovesList.js";
 import { EventTicker } from "./ui/EventTicker.js";
@@ -28,7 +29,10 @@ export function App(): React.JSX.Element {
 
   const topology: IslandTopology | null = state?.config.topology ?? null;
 
-  const camera = useMemo(() => {
+  // No memo: keyed on topology identity it would never hit (review I-5), and
+  // buildIsland() client-side would duplicate the SERVER's geometry — the
+  // radius derives from the shipped topology (54 points; per-frame is free).
+  const camera = (() => {
     const r = topology === null ? EMPTY_RADIUS : boardRadius(topology);
     const [cx, cz] = boardCenterWorld();
     // 3/4 view scaled by the board radius; look-at is the island's center.
@@ -37,7 +41,7 @@ export function App(): React.JSX.Element {
       target: [cx, 0, cz] as [number, number, number],
       fov: 42,
     };
-  }, [topology]);
+  })();
 
   return (
     <div className="table-root">
@@ -47,6 +51,8 @@ export function App(): React.JSX.Element {
         dpr={[1, 2]}
         camera={{ position: camera.position, fov: camera.fov, near: 0.1, far: 200 }}
       >
+        {/* Scene failures degrade to the rail (review I-6); never a white screen. */}
+        <ErrorBoundary>
         <color attach="background" args={[TABLE_BG]} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[6, 12, 4]} intensity={1.1} castShadow />
@@ -55,6 +61,7 @@ export function App(): React.JSX.Element {
         <Suspense fallback={null}>
           {state === null ? <EmptyTable /> : <Island state={state} />}
         </Suspense>
+        </ErrorBoundary>
       </Canvas>
 
       {state === null ? (

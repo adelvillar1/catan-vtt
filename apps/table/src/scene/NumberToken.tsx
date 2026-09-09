@@ -5,6 +5,7 @@
  * are drawn in red, as on the physical board.
  */
 import { Text } from "@react-three/drei";
+import { TABLE_FONT } from "./fonts.js";
 import { HEIGHTS, hexWorld, type Vec3 } from "./geom.js";
 import { numberTokenColor } from "./palette.js";
 
@@ -29,6 +30,7 @@ export function NumberToken({ q, r, disc }: NumberTokenProps): React.JSX.Element
         <meshStandardMaterial color="#f2ead9" roughness={0.6} />
       </mesh>
       <Text
+        font={TABLE_FONT}
         position={[0, DISC_DEPTH / 2 + 0.005, 0] as unknown as Vec3}
         rotation={[-Math.PI / 2, 0, 0]}
         fontSize={0.36}

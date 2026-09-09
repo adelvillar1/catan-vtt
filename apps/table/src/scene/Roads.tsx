@@ -26,6 +26,7 @@ export function Roads({ state, topology }: RoadsProps): React.JSX.Element {
     <group name="roads">
       {entries.map(({ edgeId, owner }) => {
         const t = roadTransform(topology, edgeId);
+        if (t === null) return null; // defensive skip (review I-6)
         return (
           <mesh
             key={edgeId}

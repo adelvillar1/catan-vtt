@@ -32,7 +32,11 @@ export function Buildings({ state, topology }: BuildingsProps): React.JSX.Elemen
   return (
     <group name="buildings">
       {entries.map(({ vertexId, kind, owner }) => {
+        // Defensive skip (review I-6): geom throws on unknown ids; a server/
+        // table version skew must degrade to "missing piece", never a white
+        // screen. The ErrorBoundary is the last line; this is the first.
         const t = buildingTransform(topology, vertexId, kind);
+        if (t === null) return null;
         const color = seatColor(owner);
         const halfW = BUILDING_WIDTH[kind] / 2;
         return (

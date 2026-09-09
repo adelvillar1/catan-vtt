@@ -77,8 +77,13 @@ export function buildingTransform(
   topo: IslandTopology,
   vertexId: string,
   kind: BuildingKind,
-): BuildingTransform {
-  const [vx, , vz] = vertexWorld(topo, vertexId);
+): BuildingTransform | null {
+  let vx: number, vz: number;
+  try {
+    [vx, , vz] = vertexWorld(topo, vertexId);
+  } catch {
+    return null; // unknown vertex id — renderers skip (review I-6)
+  }
   const bodyHeight = BUILDING_BODY_HEIGHT[kind];
   const roofHeight = BUILDING_ROOF_HEIGHT[kind];
   return {
@@ -128,10 +133,15 @@ export interface RoadTransform {
  * on (cosθ, −sinθ); `segmentYaw` is defined as atan2(−dz, dx), which is
  * exactly the θ that maps +X onto the normalized a→b direction.
  */
-export function roadTransform(topo: IslandTopology, edgeId: string): RoadTransform {
+export function roadTransform(topo: IslandTopology, edgeId: string): RoadTransform | null {
   const y = HEIGHTS.road;
-  const { a, b } = edgeSegment(topo, edgeId, y);
-  const full = edgeLength(topo, edgeId);
+  let a: Vec3, b: Vec3, full: number;
+  try {
+    ({ a, b } = edgeSegment(topo, edgeId, y));
+    full = edgeLength(topo, edgeId);
+  } catch {
+    return null; // unknown edge id — renderers skip (review I-6)
+  }
   const yaw = segmentYaw(a, b);
   return {
     position: [(a[0] + b[0]) / 2, y, (a[2] + b[2]) / 2],
@@ -196,8 +206,13 @@ export interface PortTransform {
  * Ports live on coastal vertices; the marker is the vertex itself and the
  * text is pushed radially outward so it never covers the island.
  */
-export function portTransform(topo: IslandTopology, port: Port): PortTransform {
-  const [vx, , vz] = vertexWorld(topo, port.vertexId);
+export function portTransform(topo: IslandTopology, port: Port): PortTransform | null {
+  let vx: number, vz: number;
+  try {
+    [vx, , vz] = vertexWorld(topo, port.vertexId);
+  } catch {
+    return null; // unknown port vertex — skip (review I-6)
+  }
   const [cx, cz] = boardCenterWorld();
   const dx = vx - cx;
   const dz = vz - cz;

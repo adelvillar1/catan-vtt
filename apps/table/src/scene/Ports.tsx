@@ -6,6 +6,7 @@
  * comes from palette.portLabel ("3:1", "2:1 wood"…).
  */
 import { Text } from "@react-three/drei";
+import { TABLE_FONT } from "./fonts.js";
 import type { IslandTopology, Port } from "@catan-vtt/shared";
 import { portTransform } from "./layout.js";
 import { PORT_COLORS, portLabel } from "./palette.js";
@@ -24,6 +25,7 @@ export function Ports({ ports, topology }: PortsProps): React.JSX.Element {
     <group name="ports">
       {ports.map((port) => {
         const t = portTransform(topology, port);
+        if (t === null) return null; // defensive skip (review I-6)
         const color = PORT_COLORS[port.type];
         return (
           <group key={port.vertexId}>
@@ -36,6 +38,7 @@ export function Ports({ ports, topology }: PortsProps): React.JSX.Element {
               <meshStandardMaterial color={color} roughness={0.5} />
             </mesh>
             <Text
+        font={TABLE_FONT}
               position={t.labelPosition as unknown as [number, number, number]}
               rotation={[-Math.PI / 2, 0, 0]}
               fontSize={TEXT_SIZE}

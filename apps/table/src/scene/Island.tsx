@@ -7,7 +7,7 @@
  * positioned through geom.ts / layout.ts, which are kernel-derived and
  * unit-tested.
  */
-import { useMemo } from "react";
+import { memo, Suspense } from "react";
 import type { GameState } from "@catan-vtt/shared";
 import { Hex } from "./Hex.js";
 import { NumberToken } from "./NumberToken.js";
@@ -22,27 +22,31 @@ export interface IslandProps {
   state: GameState;
 }
 
-export function Island({ state }: IslandProps): React.JSX.Element {
+/**
+ * memo: every projection frame (AND every event frame touching serverSeq)
+ * re-renders App; without this the whole 19-hex + label subtree reconciles
+ * ~600 times a game (quality review I-4). state identity changes only on
+ * projections, so the memo is real.
+ */
+export const Island = memo(function Island({ state }: IslandProps): React.JSX.Element {
   const { config } = state;
   const topology = config.topology;
 
-  const hexes = useMemo(
-    () =>
-      config.slots.map((slot) => ({
-        ...parseHexId(slot.hexId),
-        terrain: slot.terrain,
-        numberDisc: slot.numberDisc,
-      })),
-    [config.slots],
-  );
+  // Review I-5: memos keyed on config.slots/topology NEVER hit (fresh
+  // JSON.parse identities per frame) and a content-stable key would go stale
+  // on rematch. 19 items map per frame is free — compute plainly; the real
+  // per-frame saving is the Island-level memo (props are identity-stable
+  // between projections).
+  const hexes = config.slots.map((slot) => ({
+    ...parseHexId(slot.hexId),
+    terrain: slot.terrain,
+    numberDisc: slot.numberDisc,
+  }));
 
-  const waterSize = useMemo(() => 2 * boardRadius(topology) + 6, [topology]);
+  const waterSize = 2 * boardRadius(topology) + 6;
   const [cx, cz] = boardCenterWorld();
 
-  const robber = useMemo(() => robberTransform(config.slots, state.robberHexId), [
-    config.slots,
-    state.robberHexId,
-  ]);
+  const robber = robberTransform(config.slots, state.robberHexId);
   const [robberX, , robberZ] = hexIdWorld(state.robberHexId);
 
   return (
@@ -54,15 +58,24 @@ export function Island({ state }: IslandProps): React.JSX.Element {
       </mesh>
 
       <group name="hexes">
-        {hexes.map(({ q, r, terrain, numberDisc }) => (
+        {hexes.map(({ q, r, terrain }) => (
           <group key={`${q},${r}`}>
             <Hex q={q} r={r} terrain={terrain} blocked={state.robberHexId === `${q},${r}`} />
-            <NumberToken q={q} r={r} disc={numberDisc} />
           </group>
         ))}
       </group>
 
-      <Ports ports={config.ports} topology={topology} />
+      {/* Text labels (troika) suspend on font preload — isolated here so the
+          board itself is NEVER gated on it (review I-3). */}
+      <Suspense fallback={null}>
+        <group name="tokens">
+          {hexes.map(({ q, r, numberDisc }) => (
+            <NumberToken key={`t${q},${r}`} q={q} r={r} disc={numberDisc} />
+          ))}
+        </group>
+        <Ports ports={config.ports} topology={topology} />
+      </Suspense>
+
       <Roads state={state} topology={topology} />
       <Buildings state={state} topology={topology} />
 
@@ -78,4 +91,4 @@ export function Island({ state }: IslandProps): React.JSX.Element {
       </mesh>
     </group>
   );
-}
+});

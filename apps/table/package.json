@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite --port 4274 --strictPort",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --port 4275 --strictPort",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
@@ -28,5 +28,8 @@
     "typescript": "^5.9.3",
     "vite": "^8.2.1",
     "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
