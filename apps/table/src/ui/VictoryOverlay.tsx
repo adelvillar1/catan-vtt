@@ -19,7 +19,7 @@
  */
 import { useEffect, useRef } from "react";
 import { seatColor } from "../scene/palette.js";
-import { E2E_WIN_KEY, readE2eWinSeat, victoryInput, victoryView } from "./victoryView.js";
+import { readE2eWinSeat, victoryInput, victoryView } from "./victoryView.js";
 import type { GameState } from "@catan-vtt/shared"; // type-only
 
 export interface VictoryOverlayProps {
@@ -71,7 +71,6 @@ export function VictoryOverlay({ state, seat }: VictoryOverlayProps): React.JSX.
       // Click-through: the banner is an announcement, not a wall.
       aria-label="game over"
       data-winner={String(view.winnerSeat)}
-      data-e2e={E2E_WIN_KEY}
     >
       <div className="victory-card">
         <h2 ref={heading} tabIndex={-1} id="victory-heading">

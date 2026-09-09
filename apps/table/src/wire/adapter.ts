@@ -76,9 +76,21 @@ export const EVENT_RING_SIZE = 8;
 export function routeFrame(prev: RoomState, msg: ServerMsg): RoomState {
   switch (msg.type) {
     case "welcome": {
+      // The handshake for a (possibly NEW) room. Any projection still held
+      // belongs to the OLD connection — a different room, or a table whose
+      // link dropped. Keep it and the UI paints the previous game until the
+      // first frame of this one lands: stale winner banners, ghosts that
+      // belong to another island. The server ships a projection immediately
+      // after welcome, so the cleared window is sub-frame for everything
+      // except the exact stale-data failure the clearing exists to kill.
+      // (sendOp already refuses without a projection; it just waits a beat.)
       return {
         ...prev,
         status: "playing",
+        projection: null,
+        legalMoves: [],
+        serverSeq: 0,
+        events: [],
         welcome: {
           roomCode: msg.roomCode,
           seat: msg.seat,

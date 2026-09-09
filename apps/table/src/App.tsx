@@ -172,11 +172,17 @@ export function App(): React.JSX.Element {
       )}
 
       {/* Victory banner (M3-P3(a)). Derived from the projection's PUBLIC
-          winner/finalPoints — no wire change. The component itself decides
-          visibility (null while nobody has won), so the mount is unconditional;
-          render order puts it over the rail but under the discard modal
-          (z-index 15 vs 20), which cannot be up once the game has ended. */}
-      {state === null ? null : <VictoryOverlay state={state} seat={room.seat} />}
+          winner/finalPoints — no wire change. Gated on the same liveness
+          signal the board uses (status "playing", review I-2): after a win the
+          socket stays OPEN so the banner persists for everyone — but a dropped
+          link (status error/closed) must not keep asserting a result, and a
+          join to a DIFFERENT room must not paint the old winner while the new
+          room's first projection is still in flight. Auto-rejoin briefly hides
+          and re-shows it; the server re-ships winner on every projection, so
+          nothing is lost. */}
+      {state === null || room.room.status !== "playing" ? null : (
+        <VictoryOverlay state={state} seat={room.seat} />
+      )}
     </div>
   );
 }

@@ -490,7 +490,17 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--text);
-  outline: none; /* focused on appear: the ring would shout over the banner */
+}
+/* Keyboard/SR users get the announcement; a sighted keyboard user gets a
+   ring when they TAB to the heading (review M-1 — outline:none hid the only
+   focus indicator). Programmatic focus-on-appear (:focus:not(:focus-visible))
+   stays ring-free — the banner should not shout over itself on entry. */
+.victory-card h2:focus-visible {
+  outline: 2px solid var(--ok);
+  outline-offset: 4px;
+}
+.victory-card h2:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .victory-dot {

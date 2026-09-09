@@ -156,6 +156,29 @@ describe("routeFrame — server frame routing", () => {
     expect(s1).not.toBe(s0);
     expect(s0.welcome).toBeNull();
   });
+
+  it("welcome CLEARS a stale projection/legalMoves/serverSeq (review I-2 root-cause)", () => {
+    // Cross-room / reconnect scenario: the adapter still holds room A's
+    // projection when welcome for room B lands. If it survived, the table
+    // would paint room A's game (winner banner included) until B's first
+    // projection frame — seconds of a confidently wrong UI.
+    const s0 = initialRoomState();
+    const sA = routeFrame(s0, ServerMsgSchema.parse(welcomeFrame));
+    const sPlayed = routeFrame(sA, ServerMsgSchema.parse({
+      type: "projection",
+      state,
+      legalMoves: [],
+      serverSeq: 7,
+    }));
+    expect(sPlayed.projection).not.toBeNull();
+    expect(sPlayed.serverSeq).toBe(7);
+    const sB = routeFrame(sPlayed, ServerMsgSchema.parse({ ...welcomeFrame, roomCode: "zzZZzz" }));
+    expect(sB.projection).toBeNull();
+    expect(sB.legalMoves).toEqual([]);
+    expect(sB.serverSeq).toBe(0);
+    expect(sB.events).toEqual([]);
+    expect(sB.status).toBe("playing"); // status DOES advance
+  });
 });
 
 describe("routeRawFrame — parse or die (cli.ts discipline)", () => {
