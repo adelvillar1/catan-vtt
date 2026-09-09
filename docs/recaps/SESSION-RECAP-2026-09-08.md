@@ -115,3 +115,55 @@ Quality review CHANGES-REQUESTED (0 Critical / 8 Important / 9 Minor) — all ta
 - **I-6 white-screen**: unknown vertex/edge ids threw RangeError mid-render (client/server version skew). layout transforms return null, renderers skip, `ErrorBoundary` wraps canvas content.
 - Rejected as designed: length-keyed memo on hexes (rematch-stale trap — memos dropped instead, 19 items/frame is free); client `buildIsland` (would duplicate server geom — forbidden by plan ruling); live-token-rejoin-while-connected (M2 bearer ruling holds).
 - Spec reviewer #2 died at the ceiling with zero findings → re-dispatched on the fixed batch (`deleg_d89df36f`) with an explicit read-budget prompt. **Lesson: after 13 delegation ceiling-hits, review prompts must state a read budget + answer-the-questions-directly shape.**
+
+---
+
+# Part 6 — P2(a) playable browser table + quality batch (`100e233`, `f8d17e2`)
+
+**P2(a) shipped and double-gated**: the table is playable from a real browser — HUD, resource
+rail, trade + dev panels, enabled MovesList, auto-rejoin on refresh. Child `deleg_5c4a3377`
+died at the ceiling AFTER writing all UI code, BEFORE tests/evidence (the now-customary
+pattern): parent salvaged, wrote the missing test layer (hud/trade/lastRoom), ran the
+browser smoke.
+
+**The airtight proof**: bots on seats 0+1 were parked/idle, so the browser's click on a
+shipped `Place settlement (setup)` button was the ONLY force that could move the game —
+`serverSeq 4→5`, no rejected event; reload auto-rejoined seat 2 ("rejoined" banner + hand
+intact, `rf-03-rejoined.png`). My test layer caught two of MY OWN wrong expectations first
+(`afterSetup` lands in play, not mid-setup; resource abbreviation is `WOD`), and probe-locked
+a kernel truth: post-roll legalMoves = tradeBank/tradePort/endTurn.
+
+**Quality review** (`deleg_85447e1a`, hy4, COMPLETED in 14 min — the read-budget +
+no-suite-rerun rules in the prompt worked; siblings had been dying at 30 min):
+CHANGES-REQUESTED 0C/5I/9M. Every finding re-probed against current code before fixing
+(the standing rule earned its keep — two findings needed *correct* fixes, not the suggested
+ones):
+- I-2's real shape was worse than reported: the kernel **deliberately never enumerates
+  composed `tradeOffer`** (sole authority = `applyAction`); gating on `hasMove(tradeOffer)`
+  was a dead affordance. Now a state-derived gate (own turn, play phase, rolled, no pending
+  trade, no seven-window) + give∩want overlap guard.
+- I-3 (StrictMode rejoin latch) — my own smoke had PASSED with the bug present (latch only
+  bites when pass-1's socket is still CONNECTING at cleanup; the timing in my run dodged it).
+  Fix = drop the latch (refs survive simulated unmounts — that was the bug), reconnect keyed
+  on `status === "closed"`, token-guarded. **Lesson: a passing smoke does not prove a
+  React-lifecycle fix is unnecessary — prove the mechanism.**
+- I-1/I-4 (gating honesty): TradePanel selects + DevCardPanel buttons now build ONLY from
+  server-shipped ops (`shippedTrades`/`pickAll`) and send those objects verbatim.
+- Minors: lastRoom seat clamp (0..3 else spectate), two structural test tautologies replaced,
+  vacuous `ports.every` deleted, favicon 404 killed with data-URI SVG.
+
+**Evidence quirk solved honestly**: a log line said "28 remote requests" — all
+`blob:http://localhost` (troika text rasters; same-origin; my probe's hostname filter
+misclassified them). The lone 404 was `/favicon.ico`. Verified with a purpose-built network
+probe: zero true remote, zero local 4xx.
+
+Post-batch: root 356/356, typecheck 3 projects, workspace build exit 0, re-smoke green
+(room `2Xdt3P`). Plan ledger + evidence README updated (`dcdf7bb`).
+
+**P2(b1) dispatched** (`deleg_514348b0`): click-the-island — `buildTargetSet` (targets exist
+iff an op carrying that id shipped), Targets.tsx interactive ghosts, discard modal. Pre-read
+ground truth for the child's disposition: seven-window ships `discardSeven` as ENUMERATED
+combinations (multisetCombinations — could be hundreds), `moveRobber` for every other hex,
+`stealCard` per hand-holding victim (turn.ts:1408-1443). The discard UI must pick cards and
+submit one of the shipped lists (TradePanel precedent), not fabricate.
+
