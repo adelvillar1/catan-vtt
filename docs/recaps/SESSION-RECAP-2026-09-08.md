@@ -212,3 +212,34 @@ Shipped: 8a15665 + 374fa8c + 0101100. 372/372, typecheck 0, build 266ms, click-P
 M3 state: P1 done, P2(a) done, P2(b1) done. Remaining: P3 (robber-flow polish, full-game
 setup→10VP browser demo incl. discard pixels, rematch + victory, cinematic), P4 (evidence +
 docs close-out).
+
+
+---
+
+## Part 8 — P3(a): the victory banner, and the wire frame that wasn't
+
+Design discipline win: my first plan draft added a `gameOver` message across shared+room+table. Probing the
+real code before dispatch showed `state.winner`/`finalPoints` are PUBLIC (redact.ts:31) and ride EVERY
+projection — unlike the one-shot `gameEnded` event, they can't be missed by a late joiner. The frame would
+have duplicated a persistent signal across three packages for zero correctness. Rejected; the reasoning
+lives in the plan doc so nobody relitigates it. P3(a) became pure client-side: `victoryView.ts` (narrow
+`VictoryInput` param makes redaction honesty STRUCTURAL — the fn cannot read hands even though callers pass
+GameState) + `VictoryOverlay.tsx` + `eventTail()` gameEnded ticker label.
+
+`deleg_c833a51e` (hy4) completed in 1250s/37 calls — the FIRST M3 child to land without salvage, and it
+mutation-tested its own suite (8 mutations: hardcode points → 5 fail; leak past VictoryInput → 4 fail).
+Parent harness bit twice on my own strawmen, both worth remembering: (1) first "FAIL" was my assertion
+guessing the name "Bot0" in the headline when the copy correctly uses the seat COLOR — app right, probe
+wrong; (2) vision pass caught the first screenshots having a BLANK WebGL canvas — the DOM overlay paints
+before three.js's first frame after reload; fixed with a canvas.toDataURL().length content wait.
+
+Quality `deleg_0910f9ef` (650s): **APPROVED** — but I-2 was a real user-visible bug it traced: neither
+onclose nor connect() clears projection, so a win + socket-drop kept "Orange wins" painted, and joining a
+DIFFERENT room showed the old game until the new first frame. Fixed at root (welcome clears
+projection/legalMoves/serverSeq/events — a welcome IS a new handshake; pinned by a new adapter.test) plus
+the belt (status gate), and the e2e harness grew a regression check: with catan:e2eWin still set, clicking
+Leave now HIDES the banner (green in-browser). M-1 focus ring (:focus-visible, entry focus stays clean),
+M-3 dead data-e2e attr dropped. M-2 left as measured AA (6.4:1) — recorded as deliberate.
+
+Shipped: 57a3934 + 3bfa266. 396/396. M3: P1 ✅ P2(a) ✅ P2(b1) ✅ P3(a) ✅. Next: P3(b) rematch (needs the
+host-authority ruling — server.ts:21 kept it off the wire ON PURPOSE), P3(c) full-game demo to 10 VP.

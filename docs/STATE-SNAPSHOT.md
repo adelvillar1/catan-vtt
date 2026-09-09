@@ -21,5 +21,10 @@
   Commits 8a15665 + 374fa8c + 0101100.
 - **Discard-modal BROWSER proof deferred to P3** (six stack attempts, no seat-2 seven in script budget; logic
   unit-covered via pure helpers + kernel-exact multiset count). 03-discard.png deleted as misleading.
-- Next refresh: M3 P3 (robber steal-flow polish, full-game demo setup->10VP incl. discard-modal pixels,
-  rematch + victory screen).
+- **2026-09-09 (M3 P3(a) DONE, double-gated):** Victory banner (57a3934 + 3bfa266) — pure client derivation
+  from projection winner/finalPoints (planned gameOver wire frame probed+rejected, reasoning on plan). First
+  M3 child that finished under the ceiling unaided; it even mutation-tested its own suite. Quality APPROVED;
+  I-2 stale-banner fixed at root (adapter welcome clears projection) + belt (status gate), browser regression
+  green (Leave hides banner); eventTail covered. 396/396, typecheck 0, build 244ms.
+- Next refresh: M3 P3(b) rematch wire+button (host-authority ruling needed), P3(c) full-game setup->10VP demo
+  incl. discard-modal pixels + cinematic pass.
