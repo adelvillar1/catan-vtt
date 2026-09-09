@@ -33,7 +33,12 @@ if (!/^[A-Za-z0-9]{6}$/.test(ROOM)) {
 mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ executablePath: EXEC });
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+// TWO separate contexts: one localStorage per tab, exactly like two real
+// players' browsers. (A shared context let tab A's lastRoom auto-rejoin tab B
+// into seat 0 — the join form was then 'joined'-disabled and the fill timed
+// out. That is the auto-rejoin feature working, ironically.)
+const ctxA = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+const ctxB = await browser.newContext({ viewport: { width: 1280, height: 860 } });
 const errors = [];
 const watch = (p, who) => {
   p.on("pageerror", (e) => errors.push(`${who}: ${e}`));
@@ -58,23 +63,28 @@ const seqOf = (page) =>
     return m ? Number(m[1]) : -1;
   });
 
-const A = await ctx.newPage(); // host, seat 0
-const B = await ctx.newPage(); // guest, seat 2
+const ctxC = await browser.newContext({ viewport: { width: 800, height: 600 } });
+const A = await ctxA.newPage(); // host, seat 0
+const B = await ctxB.newPage(); // guest, seat 2
+const C = await ctxC.newPage(); // filler seat 1 — the room needs every seat
 watch(A, "A");
 watch(B, "B");
+watch(C, "C");
 
 await join(A, 0, "Host0");
+await join(C, 1, "Filler1");
 await join(B, 2, "Guest2");
 const seqJoin = await seqOf(A);
 
-// e2eWin=0 -> BOTH tabs (shared localStorage) inject winner seat 0 at mount.
-await A.evaluate(() => localStorage.setItem("catan:e2eWin", "0"));
-await A.reload({ waitUntil: "domcontentloaded" });
-await A.waitForSelector("#hud-panel", { timeout: 8000 });
-await A.waitForSelector("#victory-heading", { timeout: 8000 });
-await B.reload({ waitUntil: "domcontentloaded" });
-await B.waitForSelector("#hud-panel", { timeout: 8000 });
-await B.waitForSelector("#victory-heading", { timeout: 8000 });
+// e2eWin=0 in BOTH contexts -> each tab injects winner seat 0 (the host) at mount.
+const setWin = async (page) => {
+  await page.evaluate(() => localStorage.setItem("catan:e2eWin", "0"));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("#hud-panel", { timeout: 8000 });
+  await page.waitForSelector("#victory-heading", { timeout: 8000 });
+};
+await setWin(A);
+await setWin(B);
 
 const aHead = await A.locator("#victory-heading").textContent();
 const bHead = await B.locator("#victory-heading").textContent();

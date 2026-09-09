@@ -495,6 +495,19 @@ button:disabled {
    ring when they TAB to the heading (review M-1 — outline:none hid the only
    focus indicator). Programmatic focus-on-appear (:focus:not(:focus-visible))
    stays ring-free — the banner should not shout over itself on entry. */
+/* M3-P3(b) POINTER-EVENTS TRAP: the overlay is pointer-events:NONE (click-
+   through, P3(a)). Any control inside it is visible and DEAD until it
+   re-declares auto — this rule is the button's life support. */
+.victory-rematch {
+  /* Re-declared HERE, next to the trap it undoes — never as an inline style
+     (a style attribute loses to neither, but it also travels with the
+     component and gets forgotten when the copy moves). */
+  pointer-events: auto;
+  width: auto;
+  margin-top: 10px;
+  padding: 7px 16px;
+}
+
 .victory-card h2:focus-visible {
   outline: 2px solid var(--ok);
   outline-offset: 4px;

@@ -476,6 +476,57 @@ async function refresh(c: Client): Promise<GameState> {
 }
 
 /**
+ * Play the room to phase "ended" through the wire, the same way the AC2
+ * suite does (each client acts only on its OWN shipped legalMoves).
+ *
+ * M3-P3(b): the rematch suite needs a REAL ended room — the badPhase /
+ * notHost refusals and the game-2 gameEnded latch reset are only meaningful
+ * against a game the kernel actually finished. Measured: ~1600 ops, ~2 s.
+ */
+async function playToEnd(
+  clients: Client[],
+  server: RoomServer,
+  opts: { maxOps?: number } = {},
+): Promise<void> {
+  const maxOps = opts.maxOps ?? 4000;
+  const rand = lcg(20260908 ^ 0x5f3759df);
+  for (let i = 0; i < maxOps; i++) {
+    if (server.room.state.phase === "ended") break;
+    const seat = actingSeat(server.room.state);
+    const c = clients[seat]!;
+    await syncTo(c, server.room.serverSeq);
+    const st = latest(c);
+    if (st.phase === "ended") break;
+
+    let op: Op | null = null;
+    const aw = st.awaitingSeven;
+    if (aw && aw.pendingDiscard && aw.discardQueue[0]!.seat === seat) {
+      const need = aw.discardQueue[0]!.count;
+      const hand = st.players[seat]!.hand;
+      const cards: ("wood" | "brick" | "wool" | "wheat" | "ore")[] = [];
+      for (const r of ["wood", "brick", "wool", "wheat", "ore"] as const) {
+        while (cards.length < need && hand[r] > cards.filter((x) => x === r).length) cards.push(r);
+      }
+      if (cards.length === need) op = { type: "discardSeven", seat, cards };
+    }
+    op ??= pickByPriority(c.moves, rand) ?? c.moves[0] ?? null;
+    if (!op) break;
+    if ((await act(c, op)) === "applied") continue;
+    await syncTo(c, server.room.serverSeq);
+    const fb = latest(c).phase === "ended" ? null : c.moves[0];
+    if (!fb) break;
+    if ((await act(c, fb)) !== "applied") break;
+  }
+  // The loop can exit on SERVER truth (its first check) while the terminal
+  // broadcast is still in flight to the other sockets. Drain it: every
+  // client must hold the final projection (and therefore the gameEnded
+  // event that ships BEFORE it) before the caller asserts on frames.
+  for (const c of clients) {
+    await syncTo(c, server.room.serverSeq);
+  }
+}
+
+/**
  * Send an op and wait for the room's answer. Accepted ops are followed by a
  * fresh projection on the same connection — wait for it too, so the client
  * is never acting on a stale frame.
@@ -1266,4 +1317,275 @@ describe("full text-mode game over the wire", () => {
     expect(conservation).toBe(95);
     expect(() => GameStateSchema.parse(server.room.state)).not.toThrow();
   }, 600_000);
+});
+
+// ---------------------------------------------------------------------------
+// 10. rematch on the wire (M3-P3(b))
+// ---------------------------------------------------------------------------
+
+/** Boot a 3-seat room, join all three, and wait for the first projection. */
+async function bootSeated(
+  opts: { seed?: number; playerCount?: 3 | 4 } = {},
+): Promise<{
+  server: RoomServer;
+  port: number;
+  roomCode: string;
+  clients: Client[];
+}> {
+  const { server, port, roomCode } = await boot({ seed: 20260908, playerCount: 3, ...opts });
+  const clients: Client[] = [];
+  for (let seat = 0; seat < 3; seat++) {
+    const c = await openClient(port);
+    const w = await join(c, roomCode, { seat });
+    if (w.type !== "welcome" || w.seat !== seat) throw new Error(`seat ${seat} join failed`);
+    clients.push(c);
+  }
+  for (const c of clients) await c.next("projection");
+  return { server, port, roomCode, clients };
+}
+
+describe("rematch — authority (AC1: only the host, only when ended)", () => {
+  it("mid-game rematch from the host is error{badPhase} (AC3): nothing moves", async () => {
+    const { server, clients } = await bootSeated();
+    // Still in setup — definitively not "ended".
+    expect(server.room.state.phase).toBe("setup");
+    const seqBefore = server.room.serverSeq;
+    const boardBefore = JSON.stringify(server.room.state);
+
+    clients[0]!.send({ type: "rematch" });
+    const err = await clients[0]!.waitNew((m) => m.type === "error", 3000);
+    expect(err).toMatchObject({ type: "error", code: "badPhase" });
+
+    // Rejection law: no state change, no serverSeq change, no broadcast.
+    expect(server.room.serverSeq).toBe(seqBefore);
+    expect(JSON.stringify(server.room.state)).toBe(boardBefore);
+    expect(server.room.state.phase).toBe("setup");
+  });
+
+  it("a forged rematch from seat 1 is error{notHost} (AC1): nothing moves", async () => {
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    expect(server.room.state.phase).toBe("ended"); // non-vacuous: rematch IS allowed now
+    const seqBefore = server.room.serverSeq;
+    const boardBefore = JSON.stringify(server.room.state);
+
+    clients[1]!.send({ type: "rematch" });
+    const err = await clients[1]!.waitNew((m) => m.type === "error", 3000);
+    expect(err).toMatchObject({ type: "error", code: "notHost" });
+
+    expect(server.room.serverSeq).toBe(seqBefore);
+    expect(JSON.stringify(server.room.state)).toBe(boardBefore);
+    expect(server.room.state.phase).toBe("ended");
+    // The room is still the finished game 1 — the refusal did not restart it.
+    expect(server.room.winner()).not.toBeNull();
+  });
+
+  it("a spectator's rematch is error{notHost} too", async () => {
+    const { server, port, roomCode, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    expect(server.room.state.phase).toBe("ended");
+
+    const spec = await openClient(port);
+    const w = await join(spec, roomCode); // full room -> spectator
+    if (w.type !== "welcome" || w.seat !== null) throw new Error("expected a spectator");
+    await spec.next("projection");
+    const seqBefore = server.room.serverSeq;
+
+    spec.send({ type: "rematch" });
+    const err = await spec.waitNew((m) => m.type === "error", 3000);
+    expect(err).toMatchObject({ type: "error", code: "notHost" });
+    expect(server.room.serverSeq).toBe(seqBefore);
+    expect(server.room.state.phase).toBe("ended");
+  });
+
+  it("an UNJOINED socket's rematch is error{notHost} (no seat at all)", async () => {
+    const { server, port } = await bootSeated();
+    const stranger = await openClient(port);
+    stranger.send({ type: "rematch" });
+    const err = await stranger.next("error", 3000);
+    expect(err).toMatchObject({ type: "error", code: "notHost" });
+    expect(server.room.isConnected(0)).toBe(true); // untouched
+  });
+
+  it("a rematch frame carrying a seed is badMessage — the client cannot pick one (AC6)", async () => {
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    const seqBefore = server.room.serverSeq;
+    // RematchMsgSchema is .strict(): { type, seed } does not parse.
+    clients[0]!.send({ type: "rematch", seed: 12345 });
+    const err = await clients[0]!.waitNew((m) => m.type === "error", 3000);
+    expect(err).toMatchObject({ type: "error", code: "badMessage" });
+    expect(server.room.serverSeq).toBe(seqBefore);
+    expect(server.room.state.phase).toBe("ended"); // no rematch happened
+  });
+});
+
+describe("rematch — the host's happy path", () => {
+  it("seat 0 rematches an ended game: every seat gets a fresh setup projection", async () => {
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    expect(server.room.state.phase).toBe("ended");
+    const winner1 = server.room.winner();
+    expect(winner1).not.toBeNull();
+    const seqBefore = server.room.serverSeq;
+    const seedBefore = server.room.state.rngSeed;
+
+    // Every client must see game 2 — broadcasts are per-socket, so wait for
+    // a projection on EACH one (never infer from another client's frames).
+    // Match on PHASE, not serverSeq: a rematch does NOT bump serverSeq, so
+    // `serverSeq >= seqBefore` is already true of game 1's own final frame.
+    const pending = clients.map((c) =>
+      c.waitNew((m) => m.type === "projection" && m.state.phase === "setup", 5000),
+    );
+    clients[0]!.send({ type: "rematch" });
+    for (const p of pending) await p;
+
+    // Server truth: a brand-new game.
+    expect(server.room.state.phase).toBe("setup");
+    expect(server.room.winner()).toBeNull();
+    expect(server.room.state.buildings).toEqual({});
+    expect(server.room.state.roads).toEqual({});
+    // AC6: the seed changed, and no client named it.
+    expect(server.room.state.rngSeed).not.toBe(seedBefore);
+
+    // Shipped truth: each client's OWN newest projection says setup, no winner.
+    for (const c of clients) {
+      const st = await refresh(c);
+      expect(st.phase).toBe("setup");
+      expect(st.winner).toBeNull();
+      expect(st.rngSeed).toBe(0); // still scrubbed — game 2 leaks nothing
+      expect(st.rngCursor).toBe(0);
+    }
+  });
+
+  it("serverSeq does NOT reset on a rematch (room-level counter)", async () => {
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    const seqBefore = server.room.serverSeq;
+    expect(seqBefore).toBeGreaterThan(100);
+
+    clients[0]!.send({ type: "rematch" });
+    await clients[0]!.waitNew(
+      (m) => m.type === "projection" && m.state.phase === "setup",
+      5000,
+    );
+
+    // Unchanged by the rematch itself (it is not an op), still monotone.
+    expect(server.room.serverSeq).toBe(seqBefore);
+    // ...and continues upward from there on game 2's first op.
+    await syncTo(clients[0]!, server.room.serverSeq);
+    const op = clients[0]!.moves[0];
+    expect(op).toBeDefined();
+    await act(clients[0]!, op!);
+    expect(server.room.serverSeq).toBe(seqBefore + 1);
+  });
+
+  it("the rematched game is PLAYABLE and its seed is server-derived (AC6)", async () => {
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    clients[0]!.send({ type: "rematch" });
+    await clients[0]!.waitNew(
+      (m) => m.type === "projection" && m.state.phase === "setup",
+      5000,
+    );
+
+    // Setup runs to completion purely from the clients' own shipped moves.
+    let guard = 0;
+    while (server.room.state.phase === "setup") {
+      if (++guard > 64) throw new Error("setup runaway in game 2");
+      const seat = server.room.state.currentSeat;
+      const c = clients[seat]!;
+      await syncTo(c, server.room.serverSeq);
+      const op = c.moves[0];
+      expect(op).toBeDefined();
+      await act(c, op!);
+    }
+    expect(server.room.state.phase).toBe("play");
+    // The true seed is a uint32 that no frame ever carried: no client frame
+    // in this test has ever contained the number (wireScrub zeroes it).
+    const trueSeed = String(server.room.state.rngSeed);
+    for (const c of clients) {
+      for (const f of c.frames) {
+        expect(JSON.stringify(f).includes(trueSeed)).toBe(false);
+      }
+    }
+  });
+});
+
+describe("rematch — game 2 gets its OWN gameEnded (M2 review #9 latch reset)", () => {
+  it("gameEnded fires again after a rematch, once per game", async () => {
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    expect(server.room.state.phase).toBe("ended");
+
+    // Game 1: exactly ONE gameEnded per client (the latch did its job).
+    for (const c of clients) {
+      const ended = c.frames.filter((f) => f.type === "event" && f.kind === "gameEnded");
+      expect(ended.length).toBe(1);
+    }
+
+    clients[0]!.send({ type: "rematch" });
+    await clients[0]!.waitNew(
+      (m) => m.type === "projection" && m.state.phase === "setup",
+      5000,
+    );
+    expect(server.room.state.phase).toBe("setup");
+
+    // Play game 2 to its own end.
+    await playToEnd(clients, server);
+    expect(server.room.state.phase).toBe("ended"); // game 2 really finished
+
+    // THE REGRESSION: exactly TWO gameEnded events now — one per game.
+    // Without the #endedSent reset this stays 1 and the test fails.
+    for (const c of clients) {
+      await c.waitFor(
+        (m) =>
+          m.type === "event" &&
+          m.kind === "gameEnded" &&
+          c.frames.filter((f) => f.type === "event" && f.kind === "gameEnded").length === 2,
+        30_000,
+      );
+      const ended = c.frames.filter((f) => f.type === "event" && f.kind === "gameEnded");
+      expect(ended.length).toBe(2);
+      const st = await refresh(c);
+      expect(st.phase).toBe("ended");
+      expect(st.winner).toBe(server.room.state.winner);
+    }
+  }, 180_000);
+
+  it("the latch still suppresses a THIRD gameEnded inside one game", async () => {
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    // No further op is accepted once the game has ended (kernel wrongPhase),
+    // so a duplicate is impossible by construction — pin the count anyway.
+    const before = clients[0]!.frames.filter(
+      (f) => f.type === "event" && f.kind === "gameEnded",
+    ).length;
+    expect(before).toBe(1);
+    const seqBefore = server.room.serverSeq;
+    clients[0]!.send({ type: "op", op: { type: "endTurn", seat: 0 } });
+    await clients[0]!.waitNew((m) => m.type === "event" && m.kind === "rejected", 3000);
+    const after = clients[0]!.frames.filter(
+      (f) => f.type === "event" && f.kind === "gameEnded",
+    ).length;
+    expect(after).toBe(1);
+    expect(server.room.serverSeq).toBe(seqBefore);
+  }, 180_000);
+});
+
+describe("rematch — refusals are one-note, not a dead link", () => {
+  it("a refused rematch leaves the socket live and the room running", async () => {
+    const { server, clients } = await bootSeated();
+    const seqBefore = server.room.serverSeq;
+    clients[1]!.send({ type: "rematch" });
+    await clients[1]!.waitNew((m) => m.type === "error", 3000);
+    expect(clients[1]!.ws.readyState).toBe(WebSocket.OPEN);
+
+    // The room still works for everyone afterwards: a legit op lands.
+    await syncTo(clients[0]!, server.room.serverSeq);
+    const op = clients[0]!.moves[0];
+    expect(op).toBeDefined();
+    expect(await act(clients[0]!, op!)).toBe("applied");
+    expect(server.room.serverSeq).toBeGreaterThan(seqBefore);
+  });
 });

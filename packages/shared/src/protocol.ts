@@ -75,10 +75,25 @@ export const PingMsgSchema = z
   .strict();
 export type PingMsg = z.infer<typeof PingMsgSchema>;
 
+/**
+ * Ask for a fresh game on the same seats (M3-P3(b)).
+ *
+ * Host-only (seat 0) and only legal in phase "ended" — the server answers
+ * error{notHost} / error{badPhase} otherwise. The message carries NO seed:
+ * the RNG is the server's private story (see the wireScrub locking rule in
+ * multiplayer.md §5). A client that could name the next seed could name
+ * every dice roll in it.
+ */
+export const RematchMsgSchema = z
+  .object({ type: z.literal("rematch") })
+  .strict();
+export type RematchMsg = z.infer<typeof RematchMsgSchema>;
+
 export const ClientMsgSchema = z.discriminatedUnion("type", [
   JoinMsgSchema,
   OpMsgSchema,
   PingMsgSchema,
+  RematchMsgSchema,
 ]);
 export type ClientMsg = z.infer<typeof ClientMsgSchema>;
 
@@ -170,13 +185,17 @@ export const WireErrorCodeSchema = z.enum([
   "badMessage",
   "notSeated",
   "badToken",
+  /** M3-P3(b): a `rematch` from any seat but 0 (or from a spectator). */
+  "notHost",
+  /** M3-P3(b): a `rematch` while the room is not in phase "ended". */
+  "badPhase",
 ]);
 export type WireErrorCode = z.infer<typeof WireErrorCodeSchema>;
 
 /**
  * Connection-level errors ONLY (seat claims, room lookup, malformed
- * frames, unseated op attempts). Op-level errors never appear here — they
- * ride event.kind="rejected" with kernel ActionError codes.
+ * frames, unseated op attempts, host/phase refusals). Op-level errors never
+ * appear here — they ride event.kind="rejected" with kernel ActionError codes.
  */
 export const ErrorMsgSchema = z
   .object({

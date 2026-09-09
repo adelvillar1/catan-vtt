@@ -25,6 +25,7 @@ Related: `docs/architecture/overview.md`, `docs/features/rules-kernel.md`, `pack
 | `join` | `roomCode: 6 alphanumerics ([A-Za-z0-9], mixed case)`, `seat?: 0..3`, `seatToken?: string`, `name?: 1..40 chars (claims only; room caps at 24)` | Once, immediately after connect — **one join per connection**; re-join requires a new socket | Look up room; bind connection to a seat (see §3). Replies `welcome` on success, `error` on `roomNotFound` / `roomFull` / `inSeatTaken` |
 | `op` | `op: Op` (the kernel `OpSchema`, 20 variants) | Any time the player acts | `OpSchema.parse` → **reject-before-apply** → seat-authority check → `applyAction` on the true state. Emits `event(opApplied \| rejected)` + fresh `projection`; `rejected` carries kernel `code` + `details` only — server-side message text never rides the wire (it can interpolate client-controlled values) |
 | `ping` | `t: number` | Client keepalive | Replies `pong{t}` verbatim |
+| `rematch` | *(carries nothing)* | Host (seat 0) after the game ends | Authority gates: **seat 0 only** (else `error{notHost}`) and **phase `ended` only** (else `error{badPhase}`). On success: `Room.rematch` with a SERVER-derived seed (deterministic from old seed + serverSeq — a client that could name the seed could name every roll, per §5), `#endedSent` latch resets so game 2 gets its own `gameEnded`, and all seats receive a fresh `projection`. Refusals change nothing: `serverSeq` does not move. Seats, tokens and names SURVIVE a rematch |
 
 Notes:
 - `join` **without** `seat` = claim the next free seat; if the room is full the
@@ -40,7 +41,7 @@ Notes:
 | `welcome` | `roomCode`, `seat: number\|null`, `seatToken?: string`, `players: PublicPlayer[]`, `phase` | Once, on accepted join | `seat: null` ⇒ spectator (no `seatToken`). `players` is the roster: `{seat,name,color,connected}` — no hand data |
 | `projection` | `state: GameState`, `legalMoves: Op[]`, `serverSeq: number` | After join and after every state change | `state` is the **seat-scoped, RNG-scrubbed** projection (§5, §6). `legalMoves` is server-computed on the **true** state (§6) |
 | `event` | `kind`, `details: Record<string, unknown>`, `serverSeq` | Feed / op outcomes | See the kind table below |
-| `error` | `code: WireErrorCode`, `message: string` | Connection-level failure only | `inSeatTaken`, `roomFull`, `roomNotFound`, `badMessage`, `notSeated`, `badToken` |
+| `error` | `code: WireErrorCode`, `message: string` | Connection-level failure only | `inSeatTaken`, `roomFull`, `roomNotFound`, `badMessage`, `notSeated`, `badToken`, `notHost`, `badPhase` — the last two are REFUSALS of a `rematch` (M3-P3(b)): the table shows them as a transient note (the adapter keeps the link green; the socket and room are healthy) |
 | `pong` | `t: number` | In reply to `ping` | Echo of the client's `t` |
 
 `event.kind` values (`details` is opaque to the wire schema by design — clients switch on `kind`):

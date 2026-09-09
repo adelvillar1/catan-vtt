@@ -121,10 +121,15 @@ export function routeFrame(prev: RoomState, msg: ServerMsg): RoomState {
       };
     }
     case "error": {
+      // M3-P3(b): notHost / badPhase are REFUSALS of one request, not a dead
+      // link — the socket is fine and the room keeps running. Every other
+      // wire error (badToken, roomNotFound, badMessage, …) is a real
+      // connection failure and still lands as status "error".
+      const transient = msg.code === "notHost" || msg.code === "badPhase";
       return {
         ...prev,
         error: { code: msg.code, message: msg.message },
-        status: "error",
+        status: transient ? prev.status : "error",
       };
     }
     case "pong": {
@@ -213,6 +218,19 @@ export function buildOpMessage(op: Op): ClientMsg {
   const parsed = ClientMsgSchema.safeParse({ type: "op", op });
   if (!parsed.success) {
     throw new Error(`buildOpMessage: illegal op frame — ${parsed.error.message}`);
+  }
+  return parsed.data;
+}
+
+/**
+ * Build a rematch request (M3-P3(b)). The frame carries NO seed: the next
+ * game's seed is derived server-side from (seed, serverSeq) — a client that
+ * could name it could name every dice roll in game 2.
+ */
+export function buildRematchMessage(): ClientMsg {
+  const parsed = ClientMsgSchema.safeParse({ type: "rematch" });
+  if (!parsed.success) {
+    throw new Error(`buildRematchMessage: illegal rematch frame — ${parsed.error.message}`);
   }
   return parsed.data;
 }

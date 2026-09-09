@@ -181,7 +181,7 @@ export function App(): React.JSX.Element {
           and re-shows it; the server re-ships winner on every projection, so
           nothing is lost. */}
       {state === null || room.room.status !== "playing" ? null : (
-        <VictoryOverlay state={state} seat={room.seat} />
+        <VictoryOverlay state={state} seat={room.seat} onRematch={() => room.sendRematch()} />
       )}
     </div>
   );

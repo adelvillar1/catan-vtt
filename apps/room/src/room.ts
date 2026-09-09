@@ -25,6 +25,7 @@ import {
   OpSchema,
   applyAction,
   legalMoves,
+  nextU32,
   redactForSeat,
   variableSetup,
   randomDiscSetup,
@@ -40,6 +41,12 @@ import {
 
 /** Connection-level rejections — compile-time subset of the wire enum. */
 export type RoomErrorCode = Extract<WireErrorCode, "inSeatTaken" | "roomFull">;
+
+/** M3-P3(b): the fresh game's seed, returned by rematch() for the log. */
+export interface RematchResult {
+  ok: true;
+  seed: number;
+}
 
 export interface ClaimOk {
   ok: true;
@@ -116,6 +123,30 @@ export function wireScrub(s: GameState): GameState {
   return { ...s, rngSeed: 0, rngCursor: 0 };
 }
 
+/**
+ * The next game's seed, derived SERVER-SIDE from (currentSeed, serverSeq).
+ *
+ * M3-P3(b) AC6: no client may pick a seed. `rematch` carries no arguments on
+ * the wire, so the only inputs here are values the server already owns. Two
+ * rooms at the same (seed, serverSeq) derive the same next seed — which is
+ * what makes the room.test determinism assertion meaningful.
+ *
+ * Mixing: two xorshift32 steps (kernel's own Rng primitive) over a
+ * serverSeq-salted mix, finalised by a 32-bit avalanche so a +1 seq change
+ * moves every bit. `>>> 0` keeps it in the uint32 space GameState.rngSeed
+ * expects (schema: z.number().int()).
+ */
+export function rematchSeed(seed: number, serverSeq: number): number {
+  let x = (seed ^ Math.imul(serverSeq >>> 0, 0x9e3779b1)) >>> 0;
+  x = nextU32(x);
+  x = (x ^ (x >>> 15)) >>> 0;
+  x = Math.imul(x, 0x85ebca6b) >>> 0;
+  x = (x ^ (x >>> 13)) >>> 0;
+  // xorshift32 is stuck at 0; the kernel's Rng substitutes a default state,
+  // but a 0 seed here would also make "did the seed change?" read falsely.
+  return (x || 0x6d2b79f5) >>> 0;
+}
+
 // ---------------------------------------------------------------------------
 // Room
 // ---------------------------------------------------------------------------
@@ -123,7 +154,7 @@ export function wireScrub(s: GameState): GameState {
 const EVENT_RING_MAX = 500;
 
 export class Room {
-  readonly seed: number;
+  seed: number;
   readonly playerCount: 3 | 4;
   readonly setupStyle: "variable" | "randomDiscs";
 
@@ -447,8 +478,15 @@ export class Room {
   /**
    * Fresh game on a new seed. Seat claims, tokens and names SURVIVE;
    * serverSeq keeps counting upward (it is a room-level monotonic counter).
+   *
+   * ARITY CHANGE (M3-P3(b)): `newSeed` is now the DEFAULT, and it is
+   * SERVER-DERIVED (see rematchSeed) — it is never a number the client
+   * picked, because the seed is the whole dice story (multiplayer.md §5).
+   * The parameter is still honoured (tests pin determinism directly, and a
+   * future "replay this seed" tool needs it), but the transport must call
+   * `rematch()` with no argument.
    */
-  rematch(newSeed: number): void {
+  rematch(newSeed: number = rematchSeed(this.seed, this.#serverSeq)): RematchResult {
     const setupFn = this.setupStyle === "randomDiscs" ? randomDiscSetup : variableSetup;
     const names = this.#state.players.map((p) => {
       const rec = this.#seats.get(p.seat);
@@ -458,7 +496,9 @@ export class Room {
       playerCount: this.playerCount,
       playerNames: names,
     });
+    this.seed = newSeed;
     this.#cache.clear();
+    return { ok: true, seed: newSeed };
   }
 }
 

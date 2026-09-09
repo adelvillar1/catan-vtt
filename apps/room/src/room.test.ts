@@ -16,7 +16,7 @@ import {
   type Op,
 } from "@catan-vtt/shared";
 
-import { createRoom, wireScrub, type Room } from "./room.js";
+import { createRoom, rematchSeed, wireScrub, type Room } from "./room.js";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -574,6 +574,83 @@ describe("rematch", () => {
     playSetup(room);
     expect(room.state.phase).toBe("play");
     expect(room.serverSeq).toBeGreaterThan(seqBefore);
+  });
+
+  it("rematchSeed is deterministic and never echoes its input seed", () => {
+    // AC6: same (seed, serverSeq) -> same next seed, every time, anywhere.
+    expect(rematchSeed(SEED, 1671)).toBe(rematchSeed(SEED, 1671));
+    expect(rematchSeed(SEED, 0)).toBe(rematchSeed(SEED, 0));
+    // serverSeq is an input: a different point in the room's life -> a
+    // different game. (A rematch after game 1 vs after game 2 must differ,
+    // or every game 3 would replay game 2.)
+    expect(rematchSeed(SEED, 1)).not.toBe(rematchSeed(SEED, 2));
+    expect(rematchSeed(SEED, 0)).not.toBe(rematchSeed(SEED + 1, 0));
+    // A seed is a uint32 in the kernel's space (GameStateSchema: int).
+    for (const [seed, seq] of [
+      [SEED, 0],
+      [SEED, 1671],
+      [1, 999_999],
+      [0xffffffff, 7],
+      [0, 0],
+    ] as const) {
+      const next = rematchSeed(seed, seq);
+      expect(Number.isInteger(next)).toBe(true);
+      expect(next).toBeGreaterThanOrEqual(0);
+      expect(next).toBeLessThan(0x1_0000_0000);
+      // Never the old seed: "did the board change?" must read true.
+      expect(next).not.toBe(seed);
+    }
+  });
+
+  it("rematch() with no argument uses the server-derived seed and returns it", () => {
+    const room = createRoom(SEED, { playerCount: 3 });
+    claimAll(room, 3);
+    playSetup(room);
+    const seqBefore = room.serverSeq;
+    const expected = rematchSeed(SEED, seqBefore);
+
+    const res = room.rematch();
+
+    expect(res.ok).toBe(true);
+    expect(res.seed).toBe(expected);
+    expect(room.state.rngSeed).toBe(expected);
+    expect(room.seed).toBe(expected);
+    // serverSeq is a ROOM counter: a rematch is not an op.
+    expect(room.serverSeq).toBe(seqBefore);
+    expect(room.state.phase).toBe("setup");
+  });
+
+  it("two rooms at the same seed + seq rematch to the SAME game (determinism)", () => {
+    // The property the server-side derivation buys: no RNG, no clock, no
+    // process state. Same inputs => bit-identical game 2.
+    const build = () => {
+      const room = createRoom(SEED, { playerCount: 3 });
+      claimAll(room, 3);
+      playSetup(room);
+      room.rematch();
+      return room;
+    };
+    const a = build();
+    const b = build();
+    expect(JSON.stringify(a.state)).toBe(JSON.stringify(b.state));
+    expect(a.serverSeq).toBe(b.serverSeq);
+    // And it really is a DIFFERENT board than game 1 (not a no-op rematch).
+    const game1 = createRoom(SEED, { playerCount: 3 });
+    expect(JSON.stringify(a.state)).not.toBe(JSON.stringify(game1.state));
+    // The rematched game is playable.
+    playSetup(a);
+    expect(a.state.phase).toBe("play");
+  });
+
+  it("a second rematch differs from the first (the seed advances)", () => {
+    const room = createRoom(SEED, { playerCount: 3 });
+    claimAll(room, 3);
+    playSetup(room);
+    const first = room.rematch().seed;
+    playSetup(room);
+    const second = room.rematch().seed;
+    expect(second).not.toBe(first);
+    expect(room.state.rngSeed).toBe(second);
   });
 });
 

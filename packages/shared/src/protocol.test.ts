@@ -24,6 +24,7 @@ import {
   PongMsgSchema,
   ProjectionMsgSchema,
   PROTOCOL_VERSION,
+  RematchMsgSchema,
   ServerMsgSchema,
   WelcomeMsgSchema,
 } from "./protocol.js";
@@ -47,6 +48,7 @@ const CLIENT_MSGS = [
     op: { type: "tradeOffer", seat: 0, with: 2, give: ["wood"], want: ["ore"] },
   },
   { type: "ping", t: 1700000000000 },
+  { type: "rematch" }, // M3-P3(b): host-only, no payload, no seed
 ] as const;
 
 const PUBLIC_PLAYER = {
@@ -115,6 +117,8 @@ const SERVER_MSGS = [
   },
   { type: "error", code: "inSeatTaken", message: "seat 0 is taken" },
   { type: "error", code: "notSeated", message: "spectators cannot act" },
+  { type: "error", code: "notHost", message: "only the host can start a rematch" },
+  { type: "error", code: "badPhase", message: "the game has not ended" },
   { type: "pong", t: 1700000000000 },
 ] as const;
 
@@ -324,11 +328,26 @@ describe("rejection matrix", () => {
       "badMessage",
       "notSeated",
       "badToken",
+      // M3-P3(b): the two rematch refusal codes.
+      "notHost",
+      "badPhase",
     ]) {
       expect(
         ErrorMsgSchema.safeParse({ type: "error", code, message: "x" }).success,
       ).toBe(true);
     }
+  });
+
+  it("rematch carries NO seed (the server derives game 2's own)", () => {
+    // AC6, structural: the frame is a bare discriminator. A seed key is not
+    // merely ignored — .strict() rejects it, so a client cannot even SEND one.
+    expect(RematchMsgSchema.parse({ type: "rematch" })).toEqual({ type: "rematch" });
+    expect(ClientMsgSchema.parse({ type: "rematch" })).toEqual({ type: "rematch" });
+    expect(RematchMsgSchema.safeParse({ type: "rematch", seed: 1 }).success).toBe(false);
+    expect(ClientMsgSchema.safeParse({ type: "rematch", seed: 1 }).success).toBe(false);
+    expect(ClientMsgSchema.safeParse({ type: "rematch", seat: 0 }).success).toBe(false);
+    // Not a server message — clients never receive one.
+    expect(ServerMsgSchema.safeParse({ type: "rematch" }).success).toBe(false);
   });
 
   it("rejects a projection state carrying a bogus field (strict GameState)", () => {

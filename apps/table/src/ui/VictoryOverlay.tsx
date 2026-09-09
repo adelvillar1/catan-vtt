@@ -13,9 +13,17 @@
  * heading takes focus on appear and the whole panel is aria-live="polite",
  * so a screen reader or keyboard user is told the outcome.
  *
- * No dismiss button ON PURPOSE: nothing is being blocked and there is no
- * "later" state to return to — the table is finished until the host starts a
- * rematch (not on the wire in v1; P3(b) ships it and updates the sub-line).
+ * M3-P3(b): the host (seat 0) gets ONE control — "Start rematch". It is a
+ * REQUEST: the server re-checks seat 0 + phase "ended" and answers
+ * error{notHost}/error{badPhase} if either is false. Everyone else sees who
+ * they are waiting for. There is still no dismiss button: nothing is being
+ * blocked and there is no "later" state to return to.
+ *
+ * POINTER-EVENTS TRAP (plan item 5): `.victory-overlay` is pointer-events:
+ * NONE (click-through, chosen in P3(a)). A button inside it is therefore
+ * visible and DEAD unless it re-declares pointer-events:auto — done by the
+ * `.victory-rematch` rule in table.css, not by an inline style, so the fix
+ * lives with the trap that caused it.
  */
 import { useEffect, useRef } from "react";
 import { seatColor } from "../scene/palette.js";
@@ -25,9 +33,15 @@ import type { GameState } from "@catan-vtt/shared"; // type-only
 export interface VictoryOverlayProps {
   state: GameState;
   seat: number | null;
+  /** Sends { type: "rematch" }. Server-side authority still decides. */
+  onRematch: () => void;
 }
 
-export function VictoryOverlay({ state, seat }: VictoryOverlayProps): React.JSX.Element | null {
+export function VictoryOverlay({
+  state,
+  seat,
+  onRematch,
+}: VictoryOverlayProps): React.JSX.Element | null {
   const heading = useRef<HTMLHeadingElement | null>(null);
 
   // e2e AFFORDANCE (plan AC4) — same trust class and same opt-in pattern as
@@ -88,6 +102,18 @@ export function VictoryOverlay({ state, seat }: VictoryOverlayProps): React.JSX.
         <p className="hint" id="victory-sub">
           {view.sub}
         </p>
+        {/* Host-only affordance. The SERVER is the authority: a forged
+            rematch from any other seat gets error{notHost}. */}
+        {view.canRematch ? (
+          <button
+            type="button"
+            className="btn-primary victory-rematch"
+            id="victory-rematch"
+            onClick={() => onRematch()}
+          >
+            {view.rematchLabel}
+          </button>
+        ) : null}
       </div>
     </div>
   );

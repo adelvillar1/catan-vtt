@@ -18,13 +18,13 @@
  * Protocol: PROTOCOL_VERSION is out-of-band in v1 (both sides ship the same
  * build); a version bump is a deploy, not a handshake.
  *
- * NOT ON THE WIRE IN v1: `rematch` (room.rematch stays server-internal —
- * there is no client message that can call it), `chat` (no wire producer
- * yet), and multi-room lookup (one room per server process).
+ * NOT ON THE WIRE IN v1: `chat` (no wire producer yet) and multi-room
+ * lookup (one room per server process).
  *
- * HOST: the server creates the room; seat 0 is whoever claims it first. In
- * v1 the "host" is display-only — no extra authority (rematch is not on the
- * wire, so nothing needs a host gate).
+ * HOST: the server creates the room; seat 0 is whoever claims it first, and
+ * since M3-P3(b) seat 0 carries ONE real authority — starting a rematch
+ * (`rematch`, host-only, phase "ended" only; refusals are error{notHost} /
+ * error{badPhase}). Everything else stays symmetric.
  */
 import { randomInt } from "node:crypto";
 
@@ -116,7 +116,8 @@ export class RoomServer {
   /** The authoritative core. Exposed for assertions/tests; never ship state. */
   readonly room: Room;
   readonly roomCode: string;
-  readonly seed: number;
+  /** Mirrors room.seed: the CURRENT game's seed (a rematch re-derives it). */
+  seed: number;
   readonly protocolVersion: string = PROTOCOL_VERSION;
 
   readonly #wss: WebSocketServer;
@@ -261,6 +262,9 @@ export class RoomServer {
       case "ping":
         this.#send(conn, { type: "pong", t: msg.t });
         return;
+      case "rematch":
+        this.#onRematch(conn);
+        return;
       default: {
         // Unreachable while ClientMsgSchema is exactly {join, op, ping}.
         // Loud so a union extension can never silently drop a message.
@@ -394,8 +398,63 @@ export class RoomServer {
     };
   }
 
-  // rematch() is NOT on the wire in v1; if it ships, reset #endedSent there
-  // (quality review #9: one-shot gameEnded would suppress the second game's).
+  /**
+   * Fresh game on the same seats (M3-P3(b)).
+   *
+   * Authority gate, in this order:
+   *   1. notHost  — the connection's claimed seat is not 0 (or it is a
+   *                 spectator / unjoined connection). Lying with notSeated
+   *                 would be dishonest: the peer IS seated, it is just not
+   *                 the host.
+   *   2. badPhase — the room is not in phase "ended". Reusing badMessage
+   *                 would lie (that is the parse-failure code); a mid-game
+   *                 restart is a product decision, not a wire oversight.
+   *
+   * Refusals change NOTHING — no state, no serverSeq, no broadcast (the
+   * rejection law: a refused frame is not a game event).
+   *
+   * On success: the seed comes from the SERVER (rematchSeed over this
+   * room's own seed + serverSeq — the client never names it), and
+   * #endedSent resets so game 2 gets its OWN gameEnded (M2 quality review
+   * #9, whose old count raced 2/5). One broadcastProjections() replaces
+   * every seat's stale state — the fresh setup projection IS the signal
+   * (no new event kind; opApplied cannot carry a non-op and a playerJoined
+   * echo would be noise). The victory banner self-nulls because the new
+   * projection's winner is null (P3(a) derivation, no client change).
+   */
+  #onRematch(conn: Conn): void {
+    if (conn.seat !== 0) {
+      this.#send(conn, {
+        type: "error",
+        code: "notHost",
+        message: "only the host (seat 0) can start a rematch",
+      });
+      return;
+    }
+    // A superseded socket (rejoin elsewhere) is not the host anymore.
+    if (this.#seatOwner.get(0) !== conn.ws) {
+      this.#send(conn, {
+        type: "error",
+        code: "notHost",
+        message: "this connection no longer owns seat 0",
+      });
+      return;
+    }
+    if (this.room.phase !== "ended") {
+      this.#send(conn, {
+        type: "error",
+        code: "badPhase",
+        message: `a rematch needs a finished game (phase is ${this.room.phase})`,
+      });
+      return;
+    }
+
+    const res = this.room.rematch(); // seed is server-derived — no argument
+    this.seed = res.seed;
+    // M2 quality review #9: the latch is per GAME, not per room.
+    this.#endedSent = false;
+    this.#broadcastProjections();
+  }
 
   // -------------------------------------------------------------------------
   // ops

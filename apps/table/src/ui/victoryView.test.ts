@@ -103,9 +103,25 @@ describe("victoryView — post-win fields", () => {
     expect(v!.banner).toBe("🏆 Blue wins — 10 Victory Points");
   });
 
-  it("sub-line is the honest rematch copy (rematch is NOT on the wire in v1)", () => {
-    const v = victoryView(victoryInput(wonState(0, 10), null), roster(freshGame()), 0)!;
-    expect(v.sub).toBe("The host can start a rematch soon");
+  it("sub-line is seat-aware now that rematch IS on the wire (P3(b))", () => {
+    // Host (seat 0): the button copy path. P3(a)'s "can start a rematch soon"
+    // line died with the wire deferral — this pins the REPLACEMENT contract.
+    const host = victoryView(victoryInput(wonState(0, 10), null), roster(freshGame()), 0)!;
+    expect(host.sub).toBe("You're the host — start a rematch when you're ready");
+    expect(host.canRematch).toBe(true);
+    expect(host.rematchLabel).toBe("Start rematch");
+    // Guest (seat 2) and spectator (null): waiting copy, no button dangling.
+    for (const seat of [1, 2, 3, null] as const) {
+      const v = victoryView(victoryInput(wonState(0, 10), null), roster(freshGame()), seat)!;
+      expect(v.sub, `seat ${seat}`).toBe("Waiting for the host to start a rematch…");
+      expect(v.canRematch, `seat ${seat}`).toBe(false);
+      expect(v.rematchLabel, `seat ${seat}`).toBeNull();
+    }
+    // Winner identity is orthogonal to host-ness: seat 1 winning does not
+    // make seat 1's client a host.
+    const win1 = victoryView(victoryInput(wonState(1, 10), null), roster(freshGame()), 1)!;
+    expect(win1.canRematch).toBe(false);
+    expect(win1.isYou).toBe(true);
   });
 });
 

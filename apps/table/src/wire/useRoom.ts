@@ -22,6 +22,7 @@ import type { GameState, Op } from "@catan-vtt/shared";
 import {
   buildJoinMessage,
   buildOpMessage,
+  buildRematchMessage,
   clearSeatToken,
   encodeClientMessage,
   initialRoomState,
@@ -53,6 +54,13 @@ export interface UseRoom {
    * the UI surfaces it (I-2: no silent drops).
    */
   sendOp(op: Op): boolean;
+  /**
+   * Ask the room for a fresh game on the same seats (M3-P3(b)). Server-side
+   * this is seat 0 + phase "ended" only — a refusal comes back as an
+   * error{notHost}/error{badPhase} note and the room keeps running. Returns
+   * false (and warns) when nothing was sent, same discipline as sendOp.
+   */
+  sendRematch(): boolean;
   /** Close the socket, drop the token, and return to idle. */
   disconnect(): void;
   /** URL currently in use (VITE_ROOM_URL ?? default) for display. */
@@ -183,6 +191,21 @@ export function useRoom(roomUrl?: string): UseRoom {
     [],
   );
 
+  const sendRematch = useCallback((): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("[useRoom] sendRematch dropped: socket not open");
+      return false;
+    }
+    if (!stateRef.current.projection) {
+      console.warn("[useRoom] sendRematch dropped: no projection yet");
+      return false;
+    }
+    // No seed argument — the room derives game 2's seed server-side.
+    ws.send(encodeClientMessage(buildRematchMessage()));
+    return true;
+  }, []);
+
   // Unmount: stop commits, close the socket. (commit() is mounted-guarded, so
   // the late close/error listener callbacks can never setState after unmount.)
   // Setup MUST re-arm the flag: StrictMode simulates unmount+remount in dev,
@@ -203,6 +226,7 @@ export function useRoom(roomUrl?: string): UseRoom {
     seat: room.welcome?.seat ?? null,
     connect,
     sendOp,
+    sendRematch,
     disconnect,
     url,
   };

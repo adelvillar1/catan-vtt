@@ -28,7 +28,6 @@ export interface VictoryInput {
   winner: number | null;
   finalPoints: number | null;
 }
-
 /** Public roster entry — a structural subset of the kernel's PlayerState. */
 export interface VictoryRosterEntry {
   seat: number;
@@ -51,12 +50,32 @@ export interface VictoryView {
   banner: string;
   /** "You win!" when isYou, else null. */
   shout: string | null;
-  /** Honest status line: rematch is NOT on the wire in v1 (server.ts:21). */
+  /**
+   * M3-P3(b) status line. Host (seat 0): an invitation to press the button.
+   * Everyone else: who they are waiting for. Rematch IS on the wire now —
+   * the copy no longer promises "soon".
+   */
   sub: string;
+  /**
+   * M3-P3(b): this client may ask for a rematch — i.e. it is the host seat.
+   * A CLIENT-SIDE AFFORDANCE ONLY: the server re-checks seat 0 + phase
+   * "ended" and answers error{notHost}/error{badPhase}. The button is not
+   * dangled where the server would refuse it; it is never the authority.
+   */
+  canRematch: boolean;
+  /**
+   * Copy for the host's button. null for non-hosts (render the sub line
+   * instead) — one string, so the component holds no copy of its own.
+   */
+  rematchLabel: string | null;
 }
 
 const FALLBACK_NAME = "a player";
-const REMATCH_COPY = "The host can start a rematch soon";
+/** The host seat — room.ts seeds its name, server.ts gates rematch on it. */
+export const HOST_SEAT = 0;
+const HOST_SUB = "You're the host — start a rematch when you're ready";
+const GUEST_SUB = "Waiting for the host to start a rematch…";
+const REMATCH_LABEL = "Start rematch";
 
 function pointsCopy(points: number): string {
   return `${points} Victory Point${points === 1 ? "" : "s"}`;
@@ -68,7 +87,8 @@ function pointsCopy(points: number): string {
  * @param input   winner/finalPoints (a whole GameState is accepted — the
  *                narrow parameter type is what makes AC2 structural).
  * @param players public roster; only seat/name/color are ever read.
- * @param seat    this client's seat, or null for a spectator.
+ * @param seat    this client's seat, or null for a spectator. Seat 0 is the
+ *                host — the only seat allowed to ask for a rematch.
  */
 export function victoryView(
   input: VictoryInput,
@@ -85,6 +105,9 @@ export function victoryView(
   const colorKey = entry === null ? `Seat ${winner}` : entry.color;
   const points = input.finalPoints ?? 0; // kernel always sets both together
   const isYou = seat !== null && seat === winner;
+  // Seat 0 is the host (room.ts seeds its name; server.ts gates rematch on
+  // it). Spectators and unseated clients are never the host.
+  const canRematch = seat === HOST_SEAT;
 
   return {
     winnerSeat: winner,
@@ -94,7 +117,9 @@ export function victoryView(
     isYou,
     banner: `🏆 ${colorKey} wins — ${pointsCopy(points)}`,
     shout: isYou ? "You win!" : null,
-    sub: REMATCH_COPY,
+    sub: canRematch ? HOST_SUB : GUEST_SUB,
+    canRematch,
+    rematchLabel: canRematch ? REMATCH_LABEL : null,
   };
 }
 
