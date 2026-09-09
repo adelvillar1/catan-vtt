@@ -1,0 +1,45 @@
+[demo] room 1yHrXr on 4377 seed=20260908 players=3
+
+----- client seat 0 (exit 0) last lines -----
+  s0| [s0] + endTurn
+  s0| [s0] + roll
+  s0| [s0] + endTurn
+  s0| [s0] + roll
+  s0| [s0] + endTurn
+  s0| [s0] + roll
+  s0| [s0] + endTurn
+  s0| [s0] + roll
+  s0| [s0] + endTurn
+  s0| [s0] + roll
+  s0| [s0] + endTurn
+  s0| WINNER seat 2, finalPoints 10  (applied=161 rejected=0)
+
+----- client seat 1 (exit 0) last lines -----
+  s1| [s1] + endTurn
+  s1| [s1] + roll
+  s1| [s1] + tradeBank ore->wool
+  s1| [s1] + tradeBank wheat->brick
+  s1| [s1] + buildSettlement v:-0.866025,5.5
+  s1| [s1] + endTurn
+  s1| [s1] + roll
+  s1| [s1] + buildCity v:-0.866025,5.5
+  s1| [s1] + endTurn
+  s1| [s1] + roll
+  s1| [s1] + endTurn
+  s1| WINNER seat 2, finalPoints 10  (applied=243 rejected=0)
+
+----- client seat 2 (exit 0) last lines -----
+  s2| [s2] + buyDevCard
+  s2| [s2] + tradeBank wood->wool
+  s2| [s2] + tradePort brick->ore @v:0,-1
+  s2| [s2] + endTurn
+  s2| [s2] + roll
+  s2| [s2] + endTurn
+  s2| [s2] + roll
+  s2| [s2] + buyDevCard
+  s2| [s2] + tradeBank brick->wheat
+  s2| [s2] + buyDevCard
+  s2| [s2] + claimVictory
+  s2| WINNER seat 2, finalPoints 10  (applied=198 rejected=0)
+
+[demo] winner set = 2
