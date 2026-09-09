@@ -113,6 +113,35 @@ function opDetail(op: Op): string | undefined {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Event-ticker tails
+// ---------------------------------------------------------------------------
+
+/**
+ * The ` · …` tail for one ticker event (M3-P3(a) item 5).
+ *
+ * `details` is opaque on the wire, so this ONLY reads keys every kind is
+ * documented to carry — unknown/missing keys degrade to "" rather than a
+ * dump of raw JSON. `gameEnded` ships `{ winner, finalPoints }` (no `seat`
+ * key), so without this branch the row rendered the bare word "gameEnded",
+ * which is exactly the "a winner is indistinguishable from a stalled table"
+ * problem P3(a) exists to fix.
+ */
+export function eventTail(kind: string, details: Record<string, unknown>): string {
+  if (kind === "rejected") {
+    const code = details["code"];
+    return typeof code === "string" ? ` · ${code}` : "";
+  }
+  if (kind === "gameEnded") {
+    const winner = details["winner"];
+    const points = details["finalPoints"];
+    if (typeof winner !== "number") return "";
+    return ` · winner seat ${winner}${typeof points === "number" ? ` — ${points} VP` : ""}`;
+  }
+  const opType = details["opType"];
+  return typeof opType === "string" ? ` · ${opType}` : "";
+}
+
 /** Stable key so P2 can key buttons without re-deriving identity. */
 export function moveKey(op: Op, index: number): string {
   const target =

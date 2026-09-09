@@ -6,6 +6,7 @@
  * so we only surface the two keys every kind carries: seat and opType.
  */
 import type { RoomState } from "../wire/adapter.js";
+import { eventTail } from "./opLabel.js";
 
 export interface EventTickerProps {
   events: RoomState["events"];
@@ -14,15 +15,6 @@ export interface EventTickerProps {
 function seatOf(details: Record<string, unknown>): string {
   const s = details["seat"];
   return typeof s === "number" ? `seat ${s}` : "";
-}
-
-function detailTail(kind: string, details: Record<string, unknown>): string {
-  if (kind === "rejected") {
-    const code = details["code"];
-    return typeof code === "string" ? ` · ${code}` : "";
-  }
-  const opType = details["opType"];
-  return typeof opType === "string" ? ` · ${opType}` : "";
 }
 
 export function EventTicker({ events }: EventTickerProps): React.JSX.Element {
@@ -41,7 +33,7 @@ export function EventTicker({ events }: EventTickerProps): React.JSX.Element {
               <span className="seq">[{e.serverSeq}]</span>
               {e.kind}
               {seatOf(e.details) !== "" ? ` · ${seatOf(e.details)}` : ""}
-              {detailTail(e.kind, e.details)}
+              {eventTail(e.kind, e.details)}
             </li>
           ))}
         </ul>

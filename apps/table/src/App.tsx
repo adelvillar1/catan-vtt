@@ -26,6 +26,7 @@ import { Hud } from "./ui/Hud.js";
 import { ResourceRail } from "./ui/ResourceRail.js";
 import { TradePanel } from "./ui/TradePanel.js";
 import { DevCardPanel } from "./ui/DevCardPanel.js";
+import { VictoryOverlay } from "./ui/VictoryOverlay.js";
 import { readLastRoom } from "./ui/lastRoom.js";
 import { readSeatToken } from "./wire/adapter.js";
 
@@ -169,6 +170,13 @@ export function App(): React.JSX.Element {
           sendOp={room.sendOp}
         />
       )}
+
+      {/* Victory banner (M3-P3(a)). Derived from the projection's PUBLIC
+          winner/finalPoints — no wire change. The component itself decides
+          visibility (null while nobody has won), so the mount is unconditional;
+          render order puts it over the rail but under the discard modal
+          (z-index 15 vs 20), which cannot be up once the game has ended. */}
+      {state === null ? null : <VictoryOverlay state={state} seat={room.seat} />}
     </div>
   );
 }
