@@ -60,7 +60,7 @@ export function JoinPanel({ room }: JoinPanelProps): React.JSX.Element {
             value={code}
             disabled={busy || joined}
             maxLength={6}
-            onChange={(e) => setCode(e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase())}
+            onChange={(e) => setCode(e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 6))}
             placeholder="ABC123"
             aria-invalid={code.length > 0 && !codeOk}
             spellCheck={false}
