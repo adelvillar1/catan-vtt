@@ -52,3 +52,53 @@ Built `packages/shared` end-to-end via subagent-driven waves with a 2-stage read
 ## Unfinished / next
 - **M2 room server** plan to be drafted next (`docs/plans/YYYY-MM-DD-room-server.md`): WS rooms, seat tokens, OpSchema-derived relay whitelist, per-seat projections, and the rng-stream rebase (wave-5 MAJOR: rollLog+rngCursor brute-force → server must not ship the replayable stream). Ports 4273 (WS) / 4274 (table) reserved.
 - No `CLAUDE.local.md` edits this session. No deploy touched (deferred by user directive).
+
+
+---
+
+# Session Recap — 2026-09-08/09 (part 3) — M2 Room Server: COMPLETE (phases 1-4)
+
+## What happened
+Built + shipped the WS multiplayer stack with per-phase 2-stage reviews. Commits on `develop` (pushed): `708f4d2` phases 1-2 (protocol.ts wire contract + room.ts pure core, 54 tests) · `eba7396` phase 3 (server.ts ws transport + 22 wire tests) · `dba6a44` spec-review batch (stale-sweep ghost seat, terminal-event race, 5 coverage tests) · `468aad2` quality batch (one-join-per-socket lobby DoS, release-every-owned-seat, wire name field, send hardening) · `571c628` phase 4 (cli.ts text-mode table client + server-main `npm start` + demo driver + evidence) · `d4b01db` plan DONE. Final: **248/248** tests, typecheck clean.
+
+## Exit gate (AC1-AC6 all evidence-backed)
+Three REAL WebSocket clients (`Hector/Brick/Wheat`) + seeded game (seed 20260908, room MQx61x) → every client independently printed `WINNER seat 2, finalPoints 10`; 602 applied ops, **0 rejections**; parent re-ran the demo driver live (port 4377, exit 0, unanimous winner). Evidence: `docs/e2e-review/m2-two-terminal/` (per-client logs + commands.sh).
+
+## Review-earned lessons (the loops changed code every single phase)
+- **Re-probe before trusting a fix**: quality review's C1 (one socket churns joins 0→1→2 → lobby DoS) was tested against the CURRENT commit before implementing — the spec batch's "replace-binding" fix looked right but was still exploitable. Final policy: one join per socket; every teardown path (close/3-strike/sweep) releases EVERY owned seat.
+- **Tautology catch**: flagship WIN test asserted `["WIN","PROGRESS"].toContain(derived)` — unfalsifiable; replaced with hard `expect(ended).toBe(true)`.
+- **Same-tick broadcast race** (harness, not server): server sends event+projection in one synchronous burst; waiters must arm BEFORE send and match by monotonic serverSeq (`act()`/`syncTo()` pattern, documented).
+- **Strict-wire trust model**: malformed inner ops are transport `error{badMessage}` + strike (never `event{rejected}`); forged `op.seat` is wire-valid → kernel authority rejection verbatim.
+- **Terminal ordering**: `gameEnded` ships BEFORE the final projection (a client syncing by serverSeq must never see `ended` before its terminal event) — documented as load-bearing.
+- **Bearer-token ruling** (quality #5, NOT fixed): token rejoin while the old socket is still open succeeds in v1 — friends-only threat model, rotation fences it one-shot; rejecting would break legitimate pre-FIN recovery.
+
+## Process notes
+- Two children hit the 30-min ceiling (phase 3 with a broken harness race; both salvaged — their on-disk code was correct/complete, parent finished + reviewed). "Salvage, don't re-dispatch" worked twice.
+- Parent wrote 3 gap tests directly (AC5 rejoin windows; found its own `if (!seat) continue` falsy-seat-0 bug — seat 0 is valid, always compare `=== null`).
+- Provider ladder in effect: hy4-preview primary (:8787), Kimi k3 quota-capped, GLM-5.2 spare.
+
+## Unfinished / next
+M2 plan optional tail (chat plumbing, soak) — deferred, not in ACs. Next: M3 (this file, part 4).
+
+---
+
+# Session Recap — 2026-09-09 (part 4) — M3 P1: 3D table renders from the wire
+
+## What happened
+Plan `docs/plans/2026-09-08-3d-table.md` approved by user ("implement m3 as designed"). P1 dispatched; **two children both timed out at 30-min ceilings** — salvaged twice (foundation `1fd76d3`: geom frame + wire adapter + Hex/NumberToken/opLabel, 72 tests; finisher `dec1a8d`: Island/Buildings/Roads/Ports + overlay UI + App/main + layout.test.ts, 87 tests total). Root typecheck extended to 3 projects; **320/320** suite green.
+
+## First-render browser evidence (docs/e2e-review/m3-p1/)
+playwright-core 1.62.1 (from mahjong-vtt's node_modules — NO new install needed) + cached Chromium `chrome-mac-arm64` with `--use-angle=swiftshader --enable-unsafe-swiftshader` → WebGL2 canvas live, zero page errors. `02-spectator-island.png`: 19 hexes with terrain palette + number tokens + robber + port labels, winner's seat-colored settlements/roads on real vertices/edges, STATUS spectate/ended/serverSeq 602, wireScrub 0/0 held through the adapter. `03-orbited.png` proves OrbitControls.
+
+## The bug only pixels could catch (`fd0f205`)
+JoinPanel auto-uppercased the room code — invite codes are mixed-case `[A-Za-z0-9]{6}`, so `AH4hgi` became `AH4HGi` → `roomNotFound`. Typecheck, build, unit tests, AND the node-side wire smoke all passed while the join flow was literally impossible half the time. **M3 rule: no UI claim without a screenshot.**
+
+## Decisions / environment
+- **Stack corrected mid-flight to the sibling-proven combo** (react@19.2.8, fiber@9.7, drei@10.7, three@0.185, vite@8): fiber v9 peer-requires React 19 — my original react@18 dispatch died in ERESOLVE; steer corrected the live child, plan doc amended. Root `package.json` must carry ZERO app deps (child's accidental root `dependencies` block was the expo/peer noise source — removed).
+- **The coordinate frame is the phase's real deliverable**: geom.ts copies board.ts `VERTEX_OFFSETS` byte-for-byte (pointy-top, unit hex radius, worldX/worldZ = board x/y), and geom.test.ts proves hex-center == mean of 6 vertexCoords corners at EPS 1e-6 — everything P2 draws on top inherits bit-identical kernel/scene corners.
+- Command guard misreads `vite build` as a server → run via background+poll to `/tmp/p1_build.log`, or `node ./node_modules/vite/bin/vite.js` inside apps/table (workspace 8.2.2 — root's 5.4.21 is a vitest transitive, NOT the build tool).
+- macOS has no `timeout(1)`; `sleep N && cmd` foreground is fine for waits ≤ guard limits.
+- Bot games finish in ~6-7s on seed 20260908 — start the game BEFORE the browser capture if you want a built island to screenshot (ended is fine: pieces stay).
+
+## Unfinished / next
+P1 2-stage reviews in flight (deleg_d71349b3, spec + quality) — disposition + fixes, then **P2: click-to-play interaction** (MovesList buttons → sendOp, vertex/edge click targets for placement, robber drag, seven-window discard modal, trade + dev-card panels), each with its own review + screenshot evidence.
