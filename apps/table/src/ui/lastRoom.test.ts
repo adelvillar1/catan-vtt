@@ -36,6 +36,16 @@ describe("lastRoom", () => {
     expect(readLastRoom(st)!.seat).toBeNull(); // string "2" is not a seat
   });
 
+  it("out-of-range seats clamp to spectate (server badSeat avoided client-side)", () => {
+    const st = fakeStorage();
+    for (const bad of [-1, 4, 99]) {
+      st.setItem("catan.lastRoom", JSON.stringify({ roomCode: "ABC123", seat: bad }));
+      expect(readLastRoom(st)!.seat, `seat ${bad}`).toBeNull();
+    }
+    st.setItem("catan.lastRoom", JSON.stringify({ roomCode: "ABC123", seat: 3 }));
+    expect(readLastRoom(st)!.seat).toBe(3); // 3 is a real seat
+  });
+
   it("empty / corrupt / missing entries return null, never throw", () => {
     const st = fakeStorage();
     expect(readLastRoom(st)).toBeNull();

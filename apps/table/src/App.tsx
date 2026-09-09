@@ -6,7 +6,7 @@
  * empty table (dim water + caption). The overlay reads the same hook and
  * never computes legality — the move list is the server's, verbatim.
  */
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { IslandTopology } from "@catan-vtt/shared";
@@ -33,7 +33,6 @@ export function App(): React.JSX.Element {
   const room = useRoom();
   const { state } = room;
   const [rejoined, setRejoined] = useState<string | null>(null);
-  const retried = useRef(false);
 
   // Auto-rejoin: a browser refresh must land you back in your own seat.
   // Requires BOTH the lastRoom entry (JoinPanel writes it on Join) and the
@@ -41,8 +40,6 @@ export function App(): React.JSX.Element {
   // Runs once; StrictMode's double-invoke is harmless because connect() is a
   // no-op once a socket is live.
   useEffect(() => {
-    if (retried.current) return;
-    retried.current = true;
     let last: ReturnType<typeof readLastRoom> = null;
     let token: string | null = null;
     try {
@@ -60,8 +57,13 @@ export function App(): React.JSX.Element {
       seatToken: token,
     });
     if (ok) setRejoined(`rejoined ${last.roomCode}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only
-  }, []);
+    // Reviewer IMPORTANT-3: no cross-mount "retried" latch — refs SURVIVE
+    // StrictMode's simulated unmount, so the latch left pass 2 (the live
+    // mount) never reconnecting after cleanup closed pass 1's socket.
+    // Effect runs on mount and whenever the socket CLOSED (drop-rejoin);
+    // a deliberate disconnect() forgot the seat token above, so it stays.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.room.status]);
 
   const topology: IslandTopology | null = state?.config.topology ?? null;
 

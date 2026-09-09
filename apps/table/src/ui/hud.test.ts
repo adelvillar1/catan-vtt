@@ -23,7 +23,7 @@ describe("turnBanner", () => {
   it("mid-setup: waiting line names placement, yours flips with the seat", () => {
     const st = freshGame(); // variableSetup lands in phase "setup"
     expect(st.phase).toBe("setup");
-    expect(st.currentSeat).toBeGreaterThanOrEqual(0);
+    expect(st.currentSeat).toBeLessThan(SEATS); // real bound, not >=0 tautology
     const cur = st.currentSeat;
     const mine = turnBanner(st, cur);
     expect(mine.yours).toBe(true);
@@ -51,7 +51,7 @@ describe("hand chips / totals", () => {
     expect(handChips(st, null)).toEqual([]);
     expect(handTotal(st, null)).toBe(0);
     const before = handTotal(st, 0);
-    expect(before).toBeGreaterThanOrEqual(0);
+    expect(handChips(st, 0).reduce((a, c) => a + c.count, 0)).toBe(before); // chips == total
     const bumped = giveCards(st, 0, ["wood"]);
     expect(handTotal(bumped, 0)).toBe(before + 1);
     const wood = handChips(bumped, 0).find((c) => c.resource === "wood");

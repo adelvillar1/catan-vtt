@@ -254,6 +254,9 @@ export function tradeFormToOp(form: TradeForm, seat: number): Op | null {
   }
   // offer — a domestic trade to another seat
   if (form.with === undefined || form.with < 0 || form.with === seat) return null;
+  // review minor: kernel rejects a resource appearing on BOTH sides
+  // (tradeSameResource, turn.ts applyTradeOffer) — same guard as bank/port.
+  if (give.some((r) => want.includes(r))) return null;
   return { type: "tradeOffer", seat, with: form.with, give, want };
 }
 
@@ -270,10 +273,22 @@ export interface TradeCapabilities {
 
 export function tradeCapabilities(moves: readonly Op[], state: GameState, seat: number | null): TradeCapabilities {
   const portMoves = pickAll(moves, "tradePort");
+  // IMPORTANT-2: legalMoves DELIBERATELY never enumerates tradeOffer
+  // (kernel turn.ts "DOMESTIC-TRADE EXCEPTION": give/want are UI-composed
+  // multisets; applyAction is the sole legality authority). So the Opponent
+  // tab gates on the same PUBLIC state conditions requireActionPhase enforces
+  // (read-only display logic — the server still rejects whatever it rejects).
+  const offer =
+    seat !== null &&
+    state.phase === "play" &&
+    state.currentSeat === seat &&
+    state.hasRolled &&
+    state.awaitingSeven === null &&
+    state.pendingTrade === null;
   return {
     bank: hasMove(moves, "tradeBank"),
     port: portMoves.length > 0,
-    offer: hasMove(moves, "tradeOffer"),
+    offer,
     ports: [...new Set(portMoves.map((m) => m.portVertexId))],
     partners: seat === null ? [] : state.players.filter((p) => p.seat !== seat).map((p) => p.seat),
   };
@@ -283,4 +298,45 @@ export function tradeCapabilities(moves: readonly Op[], state: GameState, seat: 
 export function tradeHint(caps: TradeCapabilities): string {
   if (caps.bank || caps.port || caps.offer) return "";
   return "Trading is not legal for you right now (server shipped no trade moves).";
+}
+
+/**
+ * Legal bank/port (offer→demand) pairs the SERVER actually shipped.
+ * Review IMPORTANT-1: trade selects must list these, not all resources —
+ * otherwise the UI can "fabricate" a form whose op was never legal
+ * (insufficientHand / portResourceMismatch rejections were the best case).
+ */
+export interface ShippedTrade {
+  kind: "bank" | "port";
+  offer: Resource;
+  demand: Resource;
+  portVertexId?: string | undefined;
+  /** The exact shipped op — send THIS back verbatim, never rebuild it. */
+  op: Op;
+}
+
+export function shippedTrades(moves: readonly Op[]): ShippedTrade[] {
+  const out: ShippedTrade[] = [];
+  for (const m of moves) {
+    if (m.type === "tradeBank") {
+      out.push({ kind: "bank", offer: m.offer, demand: m.demand, op: m });
+    } else if (m.type === "tradePort") {
+      out.push({ kind: "port", offer: m.offer, demand: m.demand, portVertexId: m.portVertexId, op: m });
+    }
+  }
+  return out;
+}
+
+/** Distinct offers among shipped trades of a kind (select #1 options). */
+export function tradeOffersFor(shipped: readonly ShippedTrade[], kind: "bank" | "port"): Resource[] {
+  return [...new Set(shipped.filter((t) => t.kind === kind).map((t) => t.offer))];
+}
+
+/** Demands legal for a chosen offer+kind (select #2 options). */
+export function tradeDemandsFor(
+  shipped: readonly ShippedTrade[],
+  kind: "bank" | "port",
+  offer: Resource,
+): Resource[] {
+  return [...new Set(shipped.filter((t) => t.kind === kind && t.offer === offer).map((t) => t.demand))];
 }

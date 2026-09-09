@@ -31,7 +31,10 @@ export function readLastRoom(storage: Storage): LastRoom | null {
     if (typeof parsed !== "object" || parsed === null) return null;
     const o = parsed as Record<string, unknown>;
     if (typeof o.roomCode !== "string" || o.roomCode === "") return null;
-    const seat = typeof o.seat === "number" && Number.isInteger(o.seat) ? o.seat : null;
+    // Seats are 0..3; anything else (a hand-edited entry) becomes spectate
+    // rather than a guaranteed server badSeat (review minor).
+    const rawSeat = typeof o.seat === "number" && Number.isInteger(o.seat) ? o.seat : null;
+    const seat = rawSeat !== null && rawSeat >= 0 && rawSeat <= 3 ? rawSeat : null;
     return {
       url: typeof o.url === "string" ? o.url : "",
       roomCode: o.roomCode, // verbatim — never toUpperCase'd

@@ -11,9 +11,12 @@ import { OpSchema, legalMoves } from "@catan-vtt/shared";
 import type { Op, Resource } from "@catan-vtt/shared";
 import {
   pickAll,
+  shippedTrades,
   tradeCapabilities,
+  tradeDemandsFor,
   tradeFormToOp,
   tradeHint,
+  tradeOffersFor,
 } from "./hudLogic.js";
 import { afterRoll, giveCards, SEATS, withPendingTrade } from "./testFixtures.js";
 
@@ -45,6 +48,9 @@ describe("tradeFormToOp → OpSchema", () => {
     );
     expect(op).toEqual({ type: "tradeOffer", seat: 0, with: 1, give: ["wood", "brick"], want: ["ore"] });
     expect(tradeFormToOp({ kind: "offer", give: ["wood"], want: ["ore"], with: 0 }, 0)).toBeNull();
+    // review minor: overlap guard — a resource on BOTH sides is tradeSameResource
+    // in the kernel; the form must refuse to compose it.
+    expect(tradeFormToOp({ kind: "offer", give: ["wood"], want: ["wood", "ore"], with: 1 }, 0)).toBeNull();
     expect(tradeFormToOp({ kind: "offer", give: ["wood"], want: ["ore"] }, 0)).toBeNull();
   });
 
@@ -64,11 +70,13 @@ describe("tradeCapabilities (server-shipped moves only)", () => {
     const moves = legalMoves(st, seat);
     const caps = tradeCapabilities(moves, st, seat);
     expect(moves.length).toBeGreaterThan(0);
-    // PROBED kernel truth (seed 20260908): after the roll the mover ships
-    // tradeBank (+ their 3:1 port if eligible) + endTurn — and NOT tradeOffer
-    // (post-roll offers are illegal), which is exactly what the UI renders.
+    // PROBED kernel truth: legalMoves NEVER enumerates tradeOffer for ANYONE
+    // (turn.ts JSDoc: "UI-composed by design; applyAction is the sole
+    // authority") — the reviewer caught my old wrong rationale. So caps.bank
+    // comes from shipped ops, caps.offer from STATE affordances instead.
+    expect(moves.some((m) => m.type === "tradeOffer")).toBe(false);
     expect(caps.bank).toBe(true);
-    expect(caps.offer).toBe(false);
+    expect(caps.offer).toBe(true); // own turn, rolled, no pending, no seven
     const bankOp = pickAll(moves, "tradeBank");
     expect(bankOp.length).toBeGreaterThan(0);
     expect(bankOp[0]!.seat).toBe(seat);
@@ -89,9 +97,43 @@ describe("tradeCapabilities (server-shipped moves only)", () => {
 
   it("offer fixture: partners list every OTHER seat, ports only from shipped ops", () => {
     const { state, moves, offeree } = withPendingTrade();
+    expect(moves.length).toBeGreaterThan(0); // non-vacuous: offeree shipped
     const caps = tradeCapabilities(moves, state, offeree);
     expect(caps.partners).toHaveLength(SEATS - 1);
     expect(caps.partners).not.toContain(offeree);
-    expect(caps.ports.every((v) => pickAll(moves, "tradePort").some((m) => m.portVertexId === v))).toBe(true);
+    // caps.ports is DERIVED from shipped tradePort ops — assert the identity
+    // directly instead of an every() over a possibly-empty array (review min).
+    expect(caps.ports).toEqual([...new Set(pickAll(moves, "tradePort").map((m) => m.portVertexId))]);
+    // I-2 affordance gates, both directions:
+    // offeree is NOT currentSeat (offer froze the turn) → no offer tab…
+    expect(tradeCapabilities(moves, state, offeree).offer).toBe(false);
+    expect(state.pendingTrade).not.toBeNull();
+    // …and the offeror, though currentSeat, is blocked while pendingTrade lives.
+    expect(tradeCapabilities(moves, state, state.pendingTrade!.offeror).offer).toBe(false);
+  });
+});
+
+describe("shippedTrades (review I-1: options = server-shipped pairs)", () => {
+  it("bank option space is exactly what the kernel enumerated for the mover", () => {
+    let st = afterRoll();
+    st = giveCards(st, st.currentSeat, ["wood", "wood", "wood", "wood"]);
+    const seat = st.currentSeat;
+    const moves = legalMoves(st, seat);
+    const shipped = shippedTrades(moves);
+    expect(shipped.length).toBeGreaterThan(0);
+    expect(shipped.every((t) => t.kind === "bank" || t.kind === "port")).toBe(true);
+    const offers = tradeOffersFor(shipped, "bank");
+    expect(offers).toContain("wood"); // 4 wood shipped => wood is offerable
+    // every demand listed for an offer is paired with THAT offer only:
+    for (const o of offers) {
+      const ds = tradeDemandsFor(shipped, "bank", o);
+      expect(ds.length).toBeGreaterThan(0);
+      expect(ds.every((d) => shipped.some((t) => t.kind === "bank" && t.offer === o && t.demand === d))).toBe(true);
+    }
+    // the shipped op objects round-trip to themselves (UI sends these verbatim):
+    for (const t of shipped.slice(0, 5)) {
+      expect(t.op.type).toBe(t.kind === "bank" ? "tradeBank" : "tradePort");
+      expect((t.op as { seat: number }).seat).toBe(seat);
+    }
   });
 });

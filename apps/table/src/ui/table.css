@@ -208,10 +208,7 @@ button:disabled {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 32vh;
-  overflow-y: auto;
-}
+  gap: 4px;}
 
 .moves li {
   display: block;
@@ -375,4 +372,17 @@ button:disabled {
   font-size: 18px;
   color: var(--text);
   letter-spacing: 0.02em;
+}
+
+/* Review minor (a11y): buttons are the primary interaction now — every one
+   gets a visible focus ring; disabled gets an unmistakable flat state. */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid #e8b34b;
+  outline-offset: 2px;
+}
+button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
 }

@@ -41,8 +41,10 @@ export function Hud({ state, seat, legalMoves, sendOp }: HudProps): React.JSX.El
         <span id="hud-phase">{state.phase}</span>
       </div>
       <div className="kv">
-        <span>turn #</span>
-        <span>{state.rollLog.length + 1}</span>
+        {/* rollLog is server-shipped; there is NO turn counter in GameState,
+            so the row is what it actually is — rolls so far (review minor). */}
+        <span>rolls</span>
+        <span>{state.rollLog.length}</span>
       </div>
       {state.lastRoll !== null ? (
         <div className="kv">
@@ -85,7 +87,7 @@ export function Hud({ state, seat, legalMoves, sendOp }: HudProps): React.JSX.El
       {me !== null ? (
         <div className="kv">
           <span>your points</span>
-          <span id="hud-vp">{visiblePoints(state, seat!)}</span>
+          <span id="hud-vp">{visiblePoints(state, me.seat)}</span>
         </div>
       ) : null}
 

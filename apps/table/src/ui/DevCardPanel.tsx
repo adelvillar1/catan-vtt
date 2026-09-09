@@ -3,11 +3,12 @@
  *
  * The playable count subtracts cards bought this turn (kernel rule), but the
  * buttons themselves exist only because the server shipped play* ops.
- * playMonopoly / playYearOfPlenty need a resource choice — P2(a) sends the
- * shipped op when one exists; a picker for them is P2(b) work (see report).
+ * playMonopoly / playYearOfPlenty enumerate one op per variant — the panel
+ * renders a picker per card and sends the EXACT shipped op chosen (I-4).
  */
-import type { GameState, Op } from "@catan-vtt/shared"; // type-only
-import { devChips, pickMove } from "./hudLogic.js";
+import { useState } from "react";
+import type { GameState, Op, Resource } from "@catan-vtt/shared"; // type-only
+import { RESOURCE_ABBR, devChips, pickAll, pickMove } from "./hudLogic.js";
 
 export interface DevCardPanelProps {
   state: GameState;
@@ -28,9 +29,15 @@ export function DevCardPanel({ state, seat, legalMoves, sendOp }: DevCardPanelPr
   const chips = devChips(state, seat);
   const buy = pickMove(legalMoves, "buyDevCard");
   const knight = pickMove(legalMoves, "playKnight");
-  const monopoly = pickMove(legalMoves, "playMonopoly");
+  // Reviewer IMPORTANT-4: pickMove returns the FIRST shipped op, which made
+  // "Play monopoly" always send resource:"wood". legalMoves enumerates EVERY
+  // valid play (monopoly ×5 resources, YOP ×bank-feasible pairs), so the
+  // panel renders one button per shipped op instead of one button per card.
+  const monopolyOpts = pickAll(legalMoves, "playMonopoly");
   const roadBuilding = pickMove(legalMoves, "playRoadBuilding");
-  const yop = pickMove(legalMoves, "playYearOfPlenty");
+  const yopOpts = pickAll(legalMoves, "playYearOfPlenty");
+  const [chosenMono, setChosenMono] = useState<Resource | null>(null);
+  const [chosenYop, setChosenYop] = useState<string | null>(null);
   const any = chips.some((c) => c.count > 0) || buy !== null;
 
   return (
@@ -65,20 +72,61 @@ export function DevCardPanel({ state, seat, legalMoves, sendOp }: DevCardPanelPr
             Play knight
           </button>
         ) : null}
-        {monopoly !== null ? (
-          <button type="button" id="dev-monopoly" onClick={() => sendOp(monopoly)}>
-            Play monopoly ({monopoly.resource})
-          </button>
+        {monopolyOpts.length > 0 ? (
+          <span className="dev-picker">
+            <label htmlFor="dev-monopoly-pick" className="hint">Monopoly: take all</label>
+            <select
+              id="dev-monopoly-pick"
+              value={chosenMono ?? ""}
+              onChange={(e) => setChosenMono(e.target.value as Resource)}
+            >
+              <option value="" disabled>choose…</option>
+              {monopolyOpts.map((m) => (
+                <option key={m.resource} value={m.resource}>{RESOURCE_ABBR[m.resource]} · {m.resource}</option>
+              ))}
+            </select>
+            {chosenMono !== null ? (
+              <button type="button" id="dev-monopoly" onClick={() => {
+                const m = monopolyOpts.find((o) => o.resource === chosenMono);
+                if (m !== undefined) sendOp(m);
+              }}>
+                Play monopoly
+              </button>
+            ) : null}
+          </span>
         ) : null}
         {roadBuilding !== null ? (
           <button type="button" id="dev-roadbuilding" onClick={() => sendOp(roadBuilding)}>
             Play road building ({roadBuilding.edgeIds.length})
           </button>
         ) : null}
-        {yop !== null ? (
-          <button type="button" id="dev-yop" onClick={() => sendOp(yop)}>
-            Play year of plenty
-          </button>
+        {yopOpts.length > 0 ? (
+          <span className="dev-picker">
+            <label htmlFor="dev-yop-pick" className="hint">Year of plenty: bank</label>
+            <select
+              id="dev-yop-pick"
+              value={chosenYop ?? ""}
+              onChange={(e) => setChosenYop(e.target.value)}
+            >
+              <option value="" disabled>choose…</option>
+              {yopOpts.map((m) => {
+                const key = `${m.cards[0]}+${m.cards[1]}`;
+                return (
+                  <option key={key} value={key}>
+                    {RESOURCE_ABBR[m.cards[0] as Resource]} + {RESOURCE_ABBR[m.cards[1] as Resource]}
+                  </option>
+                );
+              })}
+            </select>
+            {chosenYop !== null ? (
+              <button type="button" id="dev-yop" onClick={() => {
+                const m = yopOpts.find((o) => `${o.cards[0]}+${o.cards[1]}` === chosenYop);
+                if (m !== undefined) sendOp(m);
+              }}>
+                Play year of plenty
+              </button>
+            ) : null}
+          </span>
         ) : null}
       </div>
 
