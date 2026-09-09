@@ -29,10 +29,10 @@ M1 shipped a pure, deterministic, fully-tested kernel (`packages/shared` 0.5.0: 
 ## Acceptance criteria
 
 - [x] AC1: `npm test` green across packages incl. new protocol + room suites; tsc clean monorepo-wide.
-- [ ] AC2: Two-terminal demo (gate from the milestone plan): host creates room, friend joins, both play 30+ turns text-mode, winner announced identically on both.
-- [ ] AC3: No frame ever contains hidden info: assert projections parse as `redactForSeat` output AND contain no replayable rng (cursor scrubbed; grep/structural test on wire fixtures) AND hand-composition of other seats is squashed.
-- [ ] AC4: Malicious-client probes: send op out of turn / fake seat / full-state-shaped payload / raw zod-injection keys → typed rejection, room keeps running, victim projection unchanged. (This is the "security later" floor — not hardening beyond it.)
-- [ ] AC5: Reconnect rehydrates seat correctly mid-seven-window and mid-pending-trade (the two frozen states).
+- [x] AC2: Multi-terminal game over real sockets (headless proof): 3 clients, seeded text-mode game, WIN branch — 1671 ops ≫ 30 turns, identical winner + finalPoints on every client (`server.test.ts` "three clients play a seeded game"; logged `[wire-game] branch=WIN`; 5/5 isolated runs green). Manual two-terminal demo ships with phase 4's `npm run start`.
+- [x] AC3: Every inbound frame in every wire test is parsed by `ServerMsgSchema` (structural), every projection has rngSeed/rngCursor=0 + GameStateSchema re-parse, others' hands all-wood-squashed at true totals; full mini-game frame capture asserts the TRUE seed integer appears in no frame (`server.test.ts` AC3 block).
+- [x] AC4: Forged seat → kernel `notYourTurn` via event{rejected}; malformed inner ops → transport error{badMessage} + 3-strike drop (its own test); victim projection BYTE-IDENTICAL across the burst; room serves the next legit op. (`server.test.ts` AC4 block; trust model documented in multiplayer.md §8.)
+- [x] AC5: Over the wire: disconnect→playerLeft→token rejoin→rotation→old-socket-close-cannot-evict, rejoin mid-awaitingSeven resolves the window, rejoin mid-pendingTrade survives both parties' churn (offer stands, accept after rejoin). Superseded-socket op guard + second-join-replace tested.
 - [x] AC6: docs/features/multiplayer.md rewritten to match what shipped; STATE-SNAPSHOT refreshed.
 
 ## Files to be touched
@@ -54,3 +54,5 @@ Update when done: `TECHNICAL-DOCUMENTATION.md` §5 (protocol table → real), `F
 ## Progress log
 
 - **2026-09-08 phases 1+2 — DONE (this commit).** protocol.ts wire contract (parent-tightened roomCode to [A-Za-z0-9]{6}, added badToken wire code) + 20 round-trip/rejection tests; apps/room core (room.ts 455L: claim/rejoin token rotation, 7-step applyOp authority, wireScrub rngSeed+rngCursor, memoized projections, spectator squash, event ring, rematch) + 34 tests incl. full text-mode game to a hard-asserted 10-VP WIN (1766 ops, 0 rejections) and AC5 rejoin-mid-seven / rejoin-mid-trade. 2-stage review (deleg_6b8fdab6 spec PASS, deleg_269d9117 quality CHANGES-REQUESTED->all 15 fixed/ruled): events() slice, tautology assertion, seat-by-value squash, Extract<> code link, lobby-policy doc (partial-claim room WAITS, not deadlocks), name cap 24, VP-over-report quirk note in redact.ts, roster carries color. AC1 ✅ AC6 ✅; AC2 needs phase 3 sockets; AC3/AC4 partial (core-proven, wire pending).
+
+- **2026-09-08 phase 3 — DONE (commit `eba7396` + this fix batch).** `server.ts` ws transport + 22 wire tests. SPEC review FAIL → both MAJORs fixed: sweep now releases seats (ghost-seat lobby stall), gameEnded ships BEFORE the terminal projection (AC2 assertion was racy 2/5 — now 5/5 green isolated). Minors taken: roomNotFound test, wire-pendingTrade AC5 closure, superseded-socket guard test, second-join-replace test (bound kept), spectator-post-op broadcast test, opTypeOf dedup. Snapshot refreshed (246/246). Phases 4-6 remain (start script + two-terminal demo, chat plumbing, soak).

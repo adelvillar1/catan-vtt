@@ -52,7 +52,7 @@ Notes:
 | `playerJoined` | `{ seat, name }` | |
 | `playerLeft` | `{ seat, name }` | Graceful leave or timeout |
 | `chat` | `{ seat \| null, text }` | |
-| `gameEnded` | `{ winner, finalPoints }` | |
+| `gameEnded` | `{ winner, finalPoints }` | Ship **before** the terminal projection so a client syncing on `serverSeq` cannot observe `phase=ended` without having seen this event |
 
 **Two disjoint error enums, on purpose.** Op-level failures ride `event.kind="rejected"`
 with kernel codes; connection-level failures ride the top-level `error` with wire codes.

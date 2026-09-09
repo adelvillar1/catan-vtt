@@ -283,6 +283,13 @@ describe("bad frames", () => {
     expect(["error", "event"]).toContain(third.type);
   });
 
+  it("a wrong roomCode is error{roomNotFound}", async () => {
+    const { port } = await boot({ seed: 3 });
+    const c = await openClient(port);
+    c.send({ type: "join", roomCode: "ZZZZZZ" });
+    expect(await c.next("error")).toMatchObject({ type: "error", code: "roomNotFound" });
+  });
+
   it("three consecutive bad frames drop the connection", async () => {
     const { port } = await boot({ seed: 6 });
     const c = await openClient(port);
@@ -333,6 +340,33 @@ describe("seat conflicts and the spectator policy", () => {
     expect(proj.legalMoves).toEqual([]);
     assertSpectatorSafe(proj.state, null);
     void seatClients;
+  });
+
+  it("a spectator keeps receiving post-op projections (still fully squashed)", async () => {
+    const { port, roomCode, server } = await boot({ seed: 9, playerCount: 3 });
+    const clients: Client[] = [];
+    for (let seat = 0; seat < 3; seat++) {
+      const c = await openClient(port);
+      await join(c, roomCode, { seat });
+      clients.push(c);
+    }
+    const spec = await openClient(port);
+    const w = await join(spec, roomCode);
+    if (w.type !== "welcome" || w.seat !== null) throw new Error("not spectator");
+    await spec.next("projection");
+    const seqBefore = spec.seq;
+    // One legit op from seat 0 -> the spectator's frame must advance.
+    await syncTo(clients[0]!, server.room.serverSeq);
+    expect(await act(clients[0]!, clients[0]!.moves[0]!)).toBe("applied");
+    await syncTo(spec, server.room.serverSeq);
+    expect(spec.seq).toBeGreaterThan(seqBefore);
+    const st = latest(spec);
+    for (const p of st.players) {
+      const total = p.hand.wood + p.hand.brick + p.hand.wool + p.hand.wheat + p.hand.ore;
+      expect(p.hand.wood).toBe(total); // every seat squashed, incl. 0
+    }
+    const frame = spec.lastProjection;
+    expect(frame && frame.type === "projection" ? frame.legalMoves.length : -1).toBe(0);
   });
 
   it("a spectator op is error{notSeated} and changes nothing", async () => {
@@ -731,6 +765,66 @@ describe("AC5 — wire rejoin", () => {
     expect(await act(b2, b2.moves[0]!)).toBe("applied");
   });
 
+  it("a SUPERSEDED socket cannot act after rejoin elsewhere (owner guard)", async () => {
+    const { port, roomCode, server } = await boot({ seed: 5, playerCount: 3 });
+    const a = await openClient(port);
+    const wa = await join(a, roomCode, { seat: 0 });
+    if (wa.type !== "welcome" || typeof wa.seatToken !== "string") throw new Error("no token");
+    const b = await openClient(port);
+    await join(b, roomCode, { seat: 1 });
+    for (const c of [a, b]) await c.next("projection");
+
+    // A re-joins seat 0 from ANOTHER socket (token) — A is superseded but
+    // its old socket is still open. The owner guard must refuse its ops.
+    const a2 = await openClient(port);
+    a2.send({ type: "join", roomCode, seatToken: wa.seatToken });
+    const w2 = await a2.next("welcome");
+    if (w2.type !== "welcome" || w2.seat !== 0) throw new Error("rejoin failed");
+    await a2.waitFor((m) => m.type === "projection", 5000);
+
+    // The OLD socket's next op must be refused: notSeated, connection-level.
+    a.send({ type: "op", op: { type: "roll", seat: 0 } });
+    const err = await a.waitNew((m) => m.type === "error", 5000);
+    expect(err).toMatchObject({ type: "error", code: "notSeated" });
+    // The NEW owner still acts fine (binding moved, seat did not die).
+    expect(server.room.isConnected(0)).toBe(true);
+    expect(a2.moves.length).toBeGreaterThan(0);
+    expect(await act(a2, a2.moves[0]!)).toBe("applied");
+    // The old token is dead after rotation.
+    const a3 = await openClient(port);
+    a3.send({ type: "join", roomCode, seatToken: wa.seatToken });
+    expect(await a3.next("error")).toMatchObject({ code: "badToken" });
+  });
+
+  it("a second join on one socket REPLACES its first binding (no orphan seats)", async () => {
+    const { port, roomCode, server } = await boot({ seed: 6, playerCount: 3 });
+    const c = await openClient(port);
+    const w1 = await join(c, roomCode, { seat: 0 });
+    if (w1.type !== "welcome") throw new Error("unreachable");
+    await c.next("projection");
+    // Same socket abandons seat 0 and claims seat 1 instead. waitNew:
+    // next("welcome") would match the FIRST welcome still in frames.
+    c.send({ type: "join", roomCode, seat: 1 });
+    const w2 = await c.waitNew((m) => m.type === "welcome", 5000);
+    if (w2.type !== "welcome" || w2.seat !== 1) {
+      throw new Error(`second join gave ${JSON.stringify(w2)}`);
+    }
+    // Seat 0 released by the replace (playerLeft broadcast), not orphaned.
+    expect(server.room.isConnected(0)).toBe(false);
+    const left = await c.waitFor(
+      (m) => m.type === "event" && m.kind === "playerLeft",
+      3000,
+    );
+    if (left.type !== "event") throw new Error("unreachable");
+    expect(left.details.seat).toBe(0);
+    // Now CLOSE: seat 1 must release too (the old bug: only ONE released).
+    await c.close();
+    for (let t = 0; t < 100 && server.room.isConnected(1); t++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(server.room.isConnected(1)).toBe(false);
+  });
+
   it("a stale token is badToken", async () => {
     const { port, roomCode } = await boot({ seed: 13, playerCount: 3 });
     const c = await openClient(port);
@@ -746,6 +840,116 @@ describe("AC5 — wire rejoin", () => {
     const c3 = await openClient(port);
     c3.send({ type: "join", roomCode, seatToken: w.seatToken });
     expect(await c3.next("error")).toMatchObject({ type: "error", code: "badToken" });
+  });
+
+  it("rejoin mid-pendingTrade: the offer survives both parties' churn (AC5)", async () => {
+    const { port, roomCode, server } = await boot({ seed: 20260908 + 11, playerCount: 3 });
+    const clients: Client[] = [];
+    const tokens: string[] = [];
+    for (let seat = 0; seat < 3; seat++) {
+      const c = await openClient(port);
+      const w = await join(c, roomCode, { seat });
+      if (w.type !== "welcome" || typeof w.seatToken !== "string") throw new Error("no token");
+      tokens.push(w.seatToken);
+      clients.push(c);
+    }
+    for (const c of clients) await c.next("projection");
+    let g = 0;
+    while (server.room.state.phase === "setup") {
+      if (++g > 64) throw new Error("setup runaway");
+      const seat = server.room.state.currentSeat;
+      await syncTo(clients[seat]!, server.room.serverSeq);
+      await act(clients[seat]!, clients[seat]!.moves[0]!);
+    }
+
+    // Find the trade window from seat 0's OWN view (bounded, honest): it may
+    // only offer a resource it visibly holds to a seat that visibly holds a
+    // different one (offeree composition is private — but the OFFEREE's own
+    // projection is what the driver reads, same trust model as the kernel
+    // test this mirrors).
+    let offered = false;
+    for (let i = 0; i < 600 && !offered; i++) {
+      const s = server.room.state;
+      if (!s.awaitingSeven && s.currentSeat === 0 && s.hasRolled) {
+        await syncTo(clients[0]!, server.room.serverSeq);
+        await syncTo(clients[1]!, server.room.serverSeq);
+        // Each side's OWN composition is visible to ITSELF (redaction keeps
+        // the own seat untouched) — so this driver reads exactly what a real
+        // pair of players would know when agreeing a trade.
+        const mine = clients[0]!.state!.players[0]!.hand;
+        const theirs = clients[1]!.state!.players[1]!.hand;
+        const RES = ["wood", "brick", "wool", "wheat", "ore"] as const;
+        const mineHas = RES.filter((r) => mine[r] > 0);
+        const theirsHas = RES.filter((r) => theirs[r] > 0);
+        const give = mineHas.find((r) => !theirsHas.includes(r) || theirsHas.length > 1);
+        const want = theirsHas.find((r) => r !== give);
+        if (give && want) {
+          const res = await act(clients[0]!, {
+            type: "tradeOffer",
+            seat: 0,
+            with: 1,
+            give: [give],
+            want: [want],
+          });
+          offered = res === "applied";
+        }
+      }
+      if (!offered) {
+        const s2 = server.room.state;
+        const aw = s2.awaitingSeven;
+        if (aw) {
+          if (aw.pendingDiscard) {
+            const debtor = aw.discardQueue[0]!.seat;
+            const dc = clients[debtor]!;
+            await syncTo(dc, server.room.serverSeq);
+            const st = dc.state!;
+            const need = aw.discardQueue[0]!.count;
+            const hand = st.players[debtor]!.hand;
+            const cards: ("wood" | "brick" | "wool" | "wheat" | "ore")[] = [];
+            for (const r of ["wood", "brick", "wool", "wheat", "ore"] as const) {
+              while (cards.length < need && hand[r] > cards.filter((x) => x === r).length) cards.push(r);
+            }
+            if (cards.length === need) {
+              await act(dc, { type: "discardSeven", seat: debtor, cards });
+            } else {
+              throw new Error(`debtor ${debtor} owes ${need}, own hand only ${JSON.stringify(hand)}`);
+            }
+          } else {
+            const roller = aw.roller;
+            const rc = clients[roller]!;
+            await syncTo(rc, server.room.serverSeq);
+            const mv = rc.moves.find((m) => m.type === "moveRobber") ?? rc.moves.find((m) => m.type === "stealCard");
+            if (mv) await act(rc, mv);
+          }
+        } else {
+          const seat = s2.currentSeat;
+          const c = clients[seat]!;
+          await syncTo(c, server.room.serverSeq);
+          const op = s2.hasRolled
+            ? ({ type: "endTurn", seat } as Op)
+            : (c.moves.find((m) => m.type === "roll") ?? ({ type: "endTurn", seat } as Op));
+          await act(c, op);
+        }
+      }
+    }
+    expect(offered).toBe(true);
+    expect(server.room.state.pendingTrade).not.toBeNull();
+
+    // Offeree churns: close, rejoin by token, ACCEPT across the churn.
+    await clients[1]!.close();
+    for (let t = 0; t < 100 && server.room.isConnected(1); t++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(server.room.state.pendingTrade).not.toBeNull(); // the offer waited
+    const back = await openClient(port);
+    back.send({ type: "join", roomCode, seatToken: tokens[1] });
+    const w = await back.next("welcome");
+    expect(w).toMatchObject({ type: "welcome", seat: 1 });
+    await back.waitFor((m) => m.type === "projection", 5000);
+    const accept = back.moves.find((m) => m.type === "tradeAccept");
+    expect(accept).toBeDefined();
+    expect(await act(back, accept!)).toBe("applied");
+    expect(server.room.state.pendingTrade).toBeNull();
   });
 
   it("rejoin mid-awaitingSeven resolves the window over the wire", async () => {
@@ -849,6 +1053,19 @@ describe("keepalive", () => {
     expect(quiet.ws.readyState).toBe(WebSocket.CLOSED);
     expect(loud.ws.readyState).toBe(WebSocket.OPEN);
     expect(server.room.isConnected(1)).toBe(true);
+    // M1 REGRESSION GUARD: a swept seat must RELEASE, not ghost. (The
+    // original sweep terminated the socket but never touched the room —
+    // claimSeat then returned inSeatTaken for a dead seat forever.)
+    for (let t = 0; t < 100 && server.room.isConnected(0); t++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(server.room.isConnected(0)).toBe(false);
+    const left = await loud.waitFor(
+      (m) => m.type === "event" && m.kind === "playerLeft",
+      3000,
+    );
+    if (left.type !== "event") throw new Error("unreachable");
+    expect(left.details.seat).toBe(0);
   });
 });
 
@@ -954,8 +1171,14 @@ describe("full text-mode game over the wire", () => {
     expect(applied).toBeGreaterThan(100);
 
     if (ended) {
-      // BRANCH: WIN — every client must see it.
+      // BRANCH: WIN — every client must see it. Await gameEnded PER CLIENT
+      // first (it is broadcast before the final projection since M2 fix —
+      // but the assertion must not depend on ordering luck either way).
       for (const c of clients) {
+        await c.waitFor(
+          (m) => m.type === "event" && m.kind === "gameEnded",
+          5000,
+        );
         const st = await refresh(c);
         expect(st.phase).toBe("ended");
         expect(st.winner).toBe(server.room.state.winner);

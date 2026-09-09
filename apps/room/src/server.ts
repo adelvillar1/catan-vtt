@@ -282,6 +282,24 @@ export class RoomServer {
       return;
     }
 
+    // One identity per socket: a second join REPLACES the first binding
+    // (spec MINOR 4 — otherwise a socket could accumulate seats and close
+    // would release only the last one, orphaning the others as connected).
+    // `bound` stays true: the socket is still a room member mid-swap, so it
+    // legitimately sees its own playerLeft broadcast.
+    if (conn.seat !== null) {
+      const held = conn.seat;
+      conn.seat = null;
+      if (this.#seatOwner.get(held) === conn.ws) {
+        this.#seatOwner.delete(held);
+        if (this.room.isConnected(held)) {
+          const nm = this.room.roster()[held]?.name ?? null;
+          this.room.disconnect(held);
+          this.#broadcastEvent("playerLeft", { seat: held, name: nm });
+        }
+      }
+    }
+
     // --- rejoin: token wins over an explicit seat (it IS the identity). ---
     if (token !== undefined) {
       const rj = this.room.rejoin(token);
@@ -372,7 +390,7 @@ export class RoomServer {
     if (!res.ok) {
       this.#broadcastEvent("rejected", {
         seat,
-        opType: typeof op === "object" && op !== null && "type" in op ? (op as { type: unknown }).type : null,
+        opType: opTypeOf(op),
         code: res.code,
         message: res.message,
         ...("details" in res ? { details: res.details } : {}),
@@ -381,29 +399,34 @@ export class RoomServer {
     }
 
     this.#broadcastEvent("opApplied", { seat, opType: opTypeOf(op), seq: res.seq });
-    this.#broadcastProjections();
     if (this.room.state.phase === "ended" && !this.#endedSent) {
+      // gameEnded BEFORE the final projection: a client whose refresh()
+      // syncs on serverSeq can then never read state while the terminal
+      // event is still in flight (review MAJOR M2 — the count raced 2/5).
       this.#endedSent = true;
       this.#broadcastEvent("gameEnded", {
         winner: this.room.state.winner,
         finalPoints: this.room.state.finalPoints,
       });
     }
+    this.#broadcastProjections();
   }
 
   #sweepStale(): void {
     const now = Date.now();
     for (const conn of [...this.#conns]) {
       if (now - conn.lastSeen <= this.#staleMs) continue;
-      this.#conns.delete(conn);
-      if (conn.seat !== null && this.#seatOwner.get(conn.seat) === conn.ws) {
-        this.#seatOwner.delete(conn.seat);
-      }
       try {
         conn.ws.terminate();
       } catch {
         /* already gone */
       }
+      // 'close' will follow on the terminated socket and run #onClose (which
+      // releases the seat). Don't rely on the event ordering though — do the
+      // full cleanup now; #onClose is idempotent (double-close guard).
+      // A ghost seat (terminated socket, room still says connected) would
+      // stall the lobby: claimSeat returns inSeatTaken forever.
+      this.#onClose(conn);
     }
   }
 
