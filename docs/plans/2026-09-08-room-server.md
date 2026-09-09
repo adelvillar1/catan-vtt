@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-09-08
 updated: 2026-09-08
 slug: room-server
@@ -28,12 +28,12 @@ M1 shipped a pure, deterministic, fully-tested kernel (`packages/shared` 0.5.0: 
 
 ## Acceptance criteria
 
-- [ ] AC1: `npm test` green across packages incl. new protocol + room suites; tsc clean monorepo-wide.
+- [x] AC1: `npm test` green across packages incl. new protocol + room suites; tsc clean monorepo-wide.
 - [ ] AC2: Two-terminal demo (gate from the milestone plan): host creates room, friend joins, both play 30+ turns text-mode, winner announced identically on both.
 - [ ] AC3: No frame ever contains hidden info: assert projections parse as `redactForSeat` output AND contain no replayable rng (cursor scrubbed; grep/structural test on wire fixtures) AND hand-composition of other seats is squashed.
 - [ ] AC4: Malicious-client probes: send op out of turn / fake seat / full-state-shaped payload / raw zod-injection keys → typed rejection, room keeps running, victim projection unchanged. (This is the "security later" floor — not hardening beyond it.)
 - [ ] AC5: Reconnect rehydrates seat correctly mid-seven-window and mid-pending-trade (the two frozen states).
-- [ ] AC6: docs/features/multiplayer.md rewritten to match what shipped; STATE-SNAPSHOT refreshed.
+- [x] AC6: docs/features/multiplayer.md rewritten to match what shipped; STATE-SNAPSHOT refreshed.
 
 ## Files to be touched
 
@@ -50,3 +50,7 @@ Auth accounts, persistence/DB, deploy/Railway, chat UX, turn timers, anti-cheat 
 ## Linked artifacts
 
 Update when done: `TECHNICAL-DOCUMENTATION.md` §5 (protocol table → real), `FUNCTIONAL-SPECIFICATIONS.md` §1/§6 (rooms/reconnection become contract), recap.
+
+## Progress log
+
+- **2026-09-08 phases 1+2 — DONE (this commit).** protocol.ts wire contract (parent-tightened roomCode to [A-Za-z0-9]{6}, added badToken wire code) + 20 round-trip/rejection tests; apps/room core (room.ts 455L: claim/rejoin token rotation, 7-step applyOp authority, wireScrub rngSeed+rngCursor, memoized projections, spectator squash, event ring, rematch) + 34 tests incl. full text-mode game to a hard-asserted 10-VP WIN (1766 ops, 0 rejections) and AC5 rejoin-mid-seven / rejoin-mid-trade. 2-stage review (deleg_6b8fdab6 spec PASS, deleg_269d9117 quality CHANGES-REQUESTED->all 15 fixed/ruled): events() slice, tautology assertion, seat-by-value squash, Extract<> code link, lobby-policy doc (partial-claim room WAITS, not deadlocks), name cap 24, VP-over-report quirk note in redact.ts, roster carries color. AC1 ✅ AC6 ✅; AC2 needs phase 3 sockets; AC3/AC4 partial (core-proven, wire pending).

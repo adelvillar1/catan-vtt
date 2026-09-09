@@ -57,7 +57,7 @@ Kernel facts (implemented + reviewed, waves 1–5):
 - `legalMoves(state, seat)` enumerates every op `applyAction` would accept (bidirectional conformance swept in tests); documented exception: domestic `tradeOffer` is UI-composed, not enumerated.
 - Setup: `variableSetup`/`randomDiscSetup(seed)` generators (10k-seed property-tested), snake placement with second-settlement terrain payment, port legality with swap-repair, seat 0 starts.
 - Golden replay: `simulateGame(seed, {metaSeed})` greedy bot; six seeded games reach real 10-VP wins; conservation invariants (95 resources / 25 deck cards) asserted per step.
-- **M2 TODO (from wave-5 review):** `rollLog` + exposed `rngCursor` make the 2^32 dice seed brute-forceable by any client holding a projection — the room server must NOT ship the replayable stream (rebase/hide cursor per projection, or ratchet the seed server-side).
+- **M2 DONE (from wave-5 review):** the seed-brute-force threat is closed at the transport layer — `apps/room/src/room.ts::wireScrub` zeroes `rngSeed` AND `rngCursor` on every outbound projection (rollLog+cursor brute-forces the 2^32 stream; kernel `redactForSeat` keeps the cursor for purity — the scrub is a server concern). Clients never roll locally; `legalMoves` ships server-computed from the TRUE state.
 
 Detail: [`docs/features/rules-kernel.md`](docs/features/rules-kernel.md), [`docs/features/multiplayer.md`](docs/features/multiplayer.md)
 
@@ -98,7 +98,7 @@ Full op table (kernel `packages/shared/src/actions.ts`, 20 ops; all `{type, seat
 | playRoadBuilding | edgeIds[1\|2] | dev gate; each edge anchored PRE-card (no chaining) | notConnected, noRoadsLeft |
 | playYearOfPlenty | cards[2] | dev gate; bank pair (same ok) | insufficientBank |
 
-Room protocol (M2, planned): client→server `OpSchema` frames only (server relay whitelist DERIVES from the kernel union — AC9); server→client `state` (redacted per seat), `legalMoves`, `error {code}`. RNG: server never ships the replayable stream (see §3 M2 TODO).
+Room protocol (`packages/shared/src/protocol.ts`, shipped in `apps/room` core): client→server `join{roomCode(6 alnum),seat?,seatToken?} | op{OpSchema — the kernel union embedded by identity} | ping{t}`; server→client `welcome{seat:0..3|null,seatToken?,players,phase} | projection{state (redactForSeat + wireScrub), legalMoves (server-computed on TRUE state), serverSeq} | event{kind: opApplied|rejected|playerJoined|playerLeft|chat|gameEnded; details opaque-by-design} | error{code: 6 wire codes} | pong{t}`. All `.strict()`, discriminated on `type`; PROTOCOL_VERSION "1" carried out-of-band. Full field tables: [`docs/features/multiplayer.md`](docs/features/multiplayer.md).
 
 ## 6. Authentication & Authorization
 

@@ -1,0 +1,23 @@
+{
+  "name": "@catan-vtt/room",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CATAN room core — seat authority, per-seat projections, op ordering. No sockets (phase 3).",
+  "main": "src/room.ts",
+  "types": "src/room.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@catan-vtt/shared": "*",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
+}

@@ -12,10 +12,11 @@
   ],
   "scripts": {
     "build": "npm run build -w packages/shared --if-present",
-    "typecheck": "tsc --noEmit -p packages/shared/tsconfig.json",
+    "typecheck": "tsc --noEmit -p packages/shared/tsconfig.json && tsc --noEmit -p apps/room/tsconfig.json",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/node": "^22.20.1",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
   }

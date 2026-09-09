@@ -17,7 +17,10 @@
  * - every OTHER player's hand is squashed to all-wood at the same TOTAL
  *   (composition erased, count preserved);
  * - every OTHER player's devHand becomes all 'victoryPoint' at the same
- *   LENGTH (types erased, count public);
+ *   LENGTH (types erased, count public). KNOWN QUIRK: victoryPoints() on a
+ *   projection OVER-REPORTS other seats (fake VP-cards count 1 each) — the
+ *   ledger is only trustworthy on the TRUE state; M3 UI must show server-
+ *   shipped values, never compute other seats' VP from a projection.
  * - the deck becomes all 'knight' at the same LENGTH (order erased);
  * - rngSeed becomes 0; rngCursor is KEPT so draw-count invariants hold.
  *

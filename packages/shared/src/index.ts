@@ -15,5 +15,6 @@ export * from "./vp.js";
 export * from "./turn.js";
 export * from "./goldenReplay.js";
 export * from "./redact.js";
+export * from "./protocol.js";
 
 export const KERNEL_VERSION = "0.5.0";
