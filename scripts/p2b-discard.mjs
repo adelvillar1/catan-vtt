@@ -91,4 +91,6 @@ if (sawModal) {
   process.exit(0);
 }
 await browser.close();
-process.exit(sawSeven ? 0 : 2);
+// Green ONLY if the modal actually appeared (review minor-8): sawSeven
+// without sawModal proves nothing about the feature -> same exit 2.
+process.exit(sawModal ? 0 : 2);

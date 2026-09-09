@@ -96,6 +96,7 @@ await page.mouse.move(t0.x, t0.y);
 await page.waitForTimeout(250);
 const cursor = await page.evaluate(() => document.body.style.cursor);
 console.log("cursor on hover:", cursor);
+const cursorHoverOk = cursor === "pointer";
 await page.mouse.click(t0.x, t0.y);
 
 let seqAfter = seqBefore;
@@ -109,7 +110,11 @@ await page.screenshot({ path: `${OUT}/02-after.png` });
 
 const rejected = await tickerHasRejected();
 console.log("AFTER seq=", seqAfter, "rejected=", rejected);
-console.log("cursor after leave:", await page.evaluate(() => document.body.style.cursor));
+const cursorLeave = await page.evaluate(() => document.body.style.cursor);
+console.log("cursor after leave:", cursorLeave);
+// After the placement the hovered ghost is REMOVED — the clamp in Targets
+// must restore the cursor even though R3F never fires onPointerOut (I-1).
+const cursorLeaveOk = cursorLeave !== "pointer";
 
 // Orbit sanity: drag on an empty corner of the canvas must NOT change seq.
 const seqPreOrbit = await serverSeq();
@@ -124,7 +129,9 @@ await page.screenshot({ path: `${OUT}/03-orbit.png` });
 
 console.log("errors:", errors.length === 0 ? "none" : errors.slice(0, 5));
 
-const ok = seqAfter > seqBefore && !rejected && seqPostOrbit === seqPreOrbit;
+const ok =
+  seqAfter > seqBefore && !rejected && seqPostOrbit === seqPreOrbit &&
+  cursorHoverOk && cursorLeaveOk;
 console.log(ok ? "PASS: canvas click advanced the server, no rejection, orbit intact" : "FAIL");
 
 await browser.close();

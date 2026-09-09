@@ -471,8 +471,11 @@ describe("mayActOnBoard", () => {
   });
 
   it("mustMoveRobber (after discards clear): the roller acts, no one else", () => {
-    // Reuse the window above by settling its discards out:
+    // Reuse the window above by settling its discards out. The drive-loop has
+    // several break paths (review I-2): assert the loop ACTUALLY arrived, or
+    // a seed/kernel change silently turns this test green-but-empty.
     let st = afterSetup();
+    let asserted = false;
     outer: for (let guard = 0; guard < 80; guard++) {
       st = fatHands(st);
       const roll = legalMoves(st, st.currentSeat).find((m) => m.type === "roll");
@@ -494,13 +497,69 @@ describe("mayActOnBoard", () => {
       if (st.awaitingSeven?.mustMoveRobber) {
         expect(mayActOnBoard(st, st.awaitingSeven.roller)).toBe(true);
         expect(mayActOnBoard(st, (st.awaitingSeven.roller + 1) % SEATS)).toBe(false);
+        asserted = true;
         break outer;
       }
       break;
     }
+    expect(asserted, "seven-window drive never reached mustMoveRobber").toBe(true);
   });
 
   it("stealCard has no board ghost (victim is a DOM choice)", () => {
     expect(placementSlot({ type: "stealCard", seat: 0, victimSeat: 1 })).toBeNull();
+  });
+
+  /**
+   * placementSlot's switch is DELIBERATELY non-exhaustive (default: null).
+   * That is safe only while the list below matches the kernel vocabulary —
+   * this test is the tripwire: it fails when OpSchema grows a new op type,
+   * forcing a human decision (ghost or DOM?) instead of a silent swallow.
+   */
+  it("placementSlot maps EXACTLY the placement ops — full vocabulary sweep", () => {
+    // Every op type the kernel can ship (packages/shared actions.ts), as
+    // minimal well-typed shapes. New type => TS error here (satisfies Op)
+    // AND the expectation list below must be edited.
+    const probe = (t: string): Op =>
+      ({
+        placeSetupPiece: { type: "placeSetupPiece", seat: 0, kind: "settlement", vertexId: "v:0,0" },
+        buildSettlement: { type: "buildSettlement", seat: 0, vertexId: "v:0,0" },
+        buildCity: { type: "buildCity", seat: 0, vertexId: "v:0,0" },
+        buildRoad: { type: "buildRoad", seat: 0, edgeId: "e:v:0,0|v:0,1" },
+        moveRobber: { type: "moveRobber", seat: 0, hexId: "0,0" },
+        roll: { type: "roll", seat: 0 },
+        endTurn: { type: "endTurn", seat: 0 },
+        discardSeven: { type: "discardSeven", seat: 0, cards: ["wood"] },
+        stealCard: { type: "stealCard", seat: 0, victimSeat: 1 },
+        playKnight: { type: "playKnight", seat: 0 },
+        claimVictory: { type: "claimVictory", seat: 0 },
+        buyDevCard: { type: "buyDevCard", seat: 0 },
+        tradeBank: { type: "tradeBank", seat: 0, offer: "wood", demand: "ore" },
+        tradePort: { type: "tradePort", seat: 0, give: ["wool"], want: "wheat" },
+        tradeOffer: { type: "tradeOffer", seat: 0, offeree: 1, give: ["wood"], want: ["ore"] },
+        tradeAccept: { type: "tradeAccept", seat: 1 },
+        tradeReject: { type: "tradeReject", seat: 1 },
+        playMonopoly: { type: "playMonopoly", seat: 0, resource: "ore" },
+        playYearOfPlenty: { type: "playYearOfPlenty", seat: 0, cards: ["wood", "brick"] },
+        playRoadBuilding: { type: "playRoadBuilding", seat: 0, edgeIds: ["e:v:0,0|v:0,1"] },
+      })[t] as Op;
+    const ghosts = new Set(["placeSetupPiece", "buildSettlement", "buildCity", "buildRoad", "moveRobber"]);
+    // the two DOM-rail ops placementSlot's comments explicitly name:
+    const domOnly = ["stealCard", "playRoadBuilding"] as const;
+    const allTypes = [
+      "placeSetupPiece", "buildSettlement", "buildCity", "buildRoad", "moveRobber",
+      "roll", "endTurn", "discardSeven", "stealCard", "playKnight", "claimVictory",
+      "buyDevCard", "tradeBank", "tradePort", "tradeOffer", "tradeAccept", "tradeReject",
+      "playMonopoly", "playYearOfPlenty", "playRoadBuilding",
+    ];
+    expect(allTypes.length).toBe(20); // kernel vocabulary size (OpSchema enum)
+    for (const t of domOnly) expect(allTypes).toContain(t);
+    for (const t of allTypes) {
+      const slot = placementSlot(probe(t));
+      if (ghosts.has(t)) {
+        expect(slot, t).not.toBeNull();
+      } else {
+        expect(slot, t).toBeNull();
+      }
+    }
   });
 });

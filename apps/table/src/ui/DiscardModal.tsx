@@ -65,11 +65,17 @@ export function DiscardModal({
     return { byKey: map, count: shipped[0]?.cards.length ?? 0 };
   }, [legalMoves]);
 
-  // A new discard window (or the seat's turn ending) must reset the picker:
-  // key the state on the owed count so a stale selection can never persist.
-  const [lastCount, setLastCount] = useState(count);
-  if (count !== lastCount) {
-    setLastCount(count);
+  // Reset the picker on window CHANGE (review minor-5): keying only on the
+  // owed count kept a stale selection across two different windows with the
+  // same count (e.g. I submit, the queue moves away — modal hidden — then a
+  // later 7 reopens for me at the same count). The window identity is
+  // (debtor, count); being hidden IS an identity (null), so submitting a
+  // discard also clears the slate. This is React's legal
+  // reset-state-on-prop-change pattern (adjust during render, not in effect).
+  const winKey = active ? `${front!.seat}:${count}` : null;
+  const [lastWin, setLastWin] = useState<string | null>(null);
+  if (lastWin !== winKey) {
+    setLastWin(winKey);
     setPicked([]);
   }
 

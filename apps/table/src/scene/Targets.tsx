@@ -32,7 +32,9 @@ export interface TargetsProps {
   onPick: (op: Op) => void;
 }
 
-/** Pointer cursor while a ghost is hovered (restored on leave/unmount). */
+/** Pointer cursor while a LIVE ghost is hovered (restored on leave; the
+ * parent clamps hover to this frame's targets so a ghost removed mid-hover
+ * — the normal click-applies case — restores the cursor too). */
 function usePointerCursor(hovered: boolean): void {
   useEffect(() => {
     if (!hovered) return;
@@ -77,6 +79,12 @@ const HOVER_SCALE = 1.25;
  * serves DEV:false even in `vite dev`, so a DEV guard silently disabled the
  * hook and the proof could not find the ghosts. An explicit opt-in is also
  * safer in principle: nothing is exposed unless a test asked for it.
+ *
+ * The opt-in is read ONCE per mount (harnesses set the flag, then reload),
+ * and the hook ships in production builds — it exposes only this client's
+ * own seat-scoped ops to page JS, which the client already has in its React
+ * state, so it adds no new reach. Acceptable; revisit if the projection ever
+ * carries anything seat-sensitive beyond the client's own view.
  */
 function useDevTargetHook(
   targets: readonly Target[],
@@ -145,7 +153,15 @@ export function Targets({ targets, seat, onPick }: TargetsProps): React.JSX.Elem
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
   useDevTargetHook(targets, camera, size);
-  usePointerCursor(hovered !== null);
+
+  // Clamp hover to LIVE ghosts (review I-1): R3F's removeInteractivity
+  // deletes a mesh from its hovered set WITHOUT firing onPointerOut, so
+  // clicking a ghost (op applies -> that ghost is gone next frame) left
+  // `hovered` pointing at a dead key and the body cursor stuck on "pointer"
+  // until some other ghost was hovered AND left. A hovered key absent from
+  // this frame's targets is treated as no-longer-hovered everywhere.
+  const live = hovered !== null && targets.some((t) => t.key === hovered) ? hovered : null;
+  usePointerCursor(live !== null);
   const color = seatColor(seat);
 
   if (targets.length === 0) return null;
@@ -157,7 +173,7 @@ export function Targets({ targets, seat, onPick }: TargetsProps): React.JSX.Elem
           key={t.key}
           target={t}
           color={color}
-          hovered={hovered === t.key}
+          hovered={live === t.key}
           onHover={(on) => setHovered(on ? t.key : null)}
           onPick={onPick}
         />
@@ -244,9 +260,10 @@ function TargetMesh({ target, color, hovered, onHover, onPick }: TargetMeshProps
   }
 
   // hex (moveRobber) — a flat slab over the tile top, so a blocked hex reads
-  // as "click me to move the robber here".
+  // as "click me to move the robber here". PI/6 yaw matches POINTY_TOP_YAW in
+  // Hex.tsx — without it the 6-gon sits 30 degrees off the tile beneath.
   return (
-    <mesh position={pos} scale={scale} {...common}>
+    <mesh position={pos} rotation={[0, Math.PI / 6, 0]} scale={scale} {...common}>
       <cylinderGeometry args={[HEX_RADIUS, HEX_RADIUS, HEX_THICKNESS, 6]} />
       <meshStandardMaterial
         color={color}

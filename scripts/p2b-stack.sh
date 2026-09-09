@@ -4,8 +4,9 @@
 set -u
 cd /Users/alejandrodelvillar/Projects/catan
 
-pkill -f "server-main" 2>/dev/null
-pkill -f "cli.ts" 2>/dev/null
+# Scoped to THIS repo's paths (a bare "cli.ts" would match sibling projects).
+pkill -f "catan/apps/room/src/server-main" 2>/dev/null
+pkill -f "catan/apps/room/src/cli.ts" 2>/dev/null
 sleep 1
 
 ROOM_PORT=4273 ROOM_SEED=20260908 ROOM_PLAYERS=3 \

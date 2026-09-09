@@ -92,7 +92,12 @@ export function placementSlot(op: Op): Slot | null {
     case "stealCard":
       return null; // victim is chosen per-seat, DOM button — no hex ghost
     default:
-      return null; // not a board placement — DOM panel territory
+      // Not a single-id board placement — DOM panel territory. This includes
+      // playRoadBuilding (ops.ts: edgeIds 1..2 — two ids, no one ghost; the
+      // rail owns it) and every non-placement op. A NEW placement-shaped op
+      // silently landing here would hide its ghosts — targetSet.test keeps a
+      // full sweep of OpSchema types; add the case + a test there.
+      return null;
   }
 }
 
