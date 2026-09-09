@@ -6,7 +6,7 @@
  * empty table (dim water + caption). The overlay reads the same hook and
  * never computes legality — the move list is the server's, verbatim.
  */
-import { Suspense } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { IslandTopology } from "@catan-vtt/shared";
@@ -19,6 +19,12 @@ import { ErrorBoundary } from "./ui/ErrorBoundary.js";
 import { StatusLine } from "./ui/StatusLine.js";
 import { MovesList } from "./ui/MovesList.js";
 import { EventTicker } from "./ui/EventTicker.js";
+import { Hud } from "./ui/Hud.js";
+import { ResourceRail } from "./ui/ResourceRail.js";
+import { TradePanel } from "./ui/TradePanel.js";
+import { DevCardPanel } from "./ui/DevCardPanel.js";
+import { readLastRoom } from "./ui/lastRoom.js";
+import { readSeatToken } from "./wire/adapter.js";
 
 /** Fallback radius used before any projection arrives (unit board ≈ 3.6). */
 const EMPTY_RADIUS = 3.6;
@@ -26,6 +32,36 @@ const EMPTY_RADIUS = 3.6;
 export function App(): React.JSX.Element {
   const room = useRoom();
   const { state } = room;
+  const [rejoined, setRejoined] = useState<string | null>(null);
+  const retried = useRef(false);
+
+  // Auto-rejoin: a browser refresh must land you back in your own seat.
+  // Requires BOTH the lastRoom entry (JoinPanel writes it on Join) and the
+  // seatToken for that room code (wire/adapter.ts stores it on every welcome).
+  // Runs once; StrictMode's double-invoke is harmless because connect() is a
+  // no-op once a socket is live.
+  useEffect(() => {
+    if (retried.current) return;
+    retried.current = true;
+    let last: ReturnType<typeof readLastRoom> = null;
+    let token: string | null = null;
+    try {
+      last = readLastRoom(window.localStorage);
+      token = last === null ? null : readSeatToken(window.localStorage, last.roomCode);
+    } catch {
+      return; // storage disabled — nothing to rejoin
+    }
+    if (last === null || token === null) return;
+    const ok = room.connect({
+      roomCode: last.roomCode,
+      ...(last.url !== "" ? { url: last.url } : {}),
+      ...(last.seat === null ? {} : { seat: last.seat }),
+      ...(last.name !== "" ? { name: last.name } : {}),
+      seatToken: token,
+    });
+    if (ok) setRejoined(`rejoined ${last.roomCode}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only
+  }, []);
 
   const topology: IslandTopology | null = state?.config.topology ?? null;
 
@@ -74,7 +110,20 @@ export function App(): React.JSX.Element {
       <aside className="table-rail">
         <JoinPanel room={room} />
         <StatusLine room={room} />
-        <MovesList moves={room.legalMoves} connected={state !== null} />
+        {rejoined !== null ? (
+          <p className="hint" id="rejoin-note">
+            {rejoined}
+          </p>
+        ) : null}
+        {state === null ? null : (
+          <>
+            <Hud state={state} seat={room.seat} legalMoves={room.legalMoves} sendOp={room.sendOp} />
+            <ResourceRail state={state} seat={room.seat} legalMoves={room.legalMoves} sendOp={room.sendOp} />
+            <TradePanel state={state} seat={room.seat} legalMoves={room.legalMoves} sendOp={room.sendOp} />
+            <DevCardPanel state={state} seat={room.seat} legalMoves={room.legalMoves} sendOp={room.sendOp} />
+          </>
+        )}
+        <MovesList moves={room.legalMoves} connected={state !== null} onSend={room.sendOp} />
         <EventTicker events={room.room.events} />
       </aside>
     </div>

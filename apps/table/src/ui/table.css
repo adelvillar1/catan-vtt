@@ -259,6 +259,104 @@ button:disabled {
   margin-right: 6px;
 }
 
+
+/* ------------------------------------------------------- P2 playable UI */
+
+.hud-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: rgba(4, 14, 24, 0.7);
+  border: 1px solid var(--panel-border);
+}
+
+.hud-banner[data-yours="1"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.hud-flag {
+  margin: 6px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--danger);
+}
+
+.hud-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.hud-actions button {
+  flex: 1 1 auto;
+  min-width: 84px;
+}
+
+.hud-trade {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px dashed var(--accent-dim);
+  border-radius: 6px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(4, 14, 24, 0.8);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip b {
+  color: var(--text);
+}
+
+.chip em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.trade-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.trade-tabs button {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.trade-tabs .tab-on {
+  border-color: var(--accent);
+  background: #1d6fb8;
+}
+
 /* ---------------------------------------------------------- empty state */
 
 .empty {

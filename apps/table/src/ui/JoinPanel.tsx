@@ -9,12 +9,30 @@
 import { useState } from "react";
 import { DEFAULT_ROOM_URL, type UseRoom } from "../wire/useRoom.js";
 import { seatName } from "../scene/palette.js";
+import { readLastRoom, writeLastRoom } from "./lastRoom.js";
 
 export interface JoinPanelProps {
   room: UseRoom;
 }
 
 const ROOM_CODE_RE = /^[A-Za-z0-9]{6}$/;
+
+// localStorage is browser-only; a missing/disabled store must never throw.
+function safeWriteLastRoom(room: { url: string; roomCode: string; name: string; seat: number | null }): void {
+  try {
+    writeLastRoom(window.localStorage, room);
+  } catch {
+    /* storage disabled — auto-rejoin just won't happen */
+  }
+}
+
+function safeReadLastRoom(): { roomCode: string; seat: number | null } | null {
+  try {
+    return readLastRoom(window.localStorage);
+  } catch {
+    return null;
+  }
+}
 
 export function JoinPanel({ room }: JoinPanelProps): React.JSX.Element {
   const [url, setUrl] = useState(room.url || DEFAULT_ROOM_URL);
@@ -23,12 +41,16 @@ export function JoinPanel({ room }: JoinPanelProps): React.JSX.Element {
   const [seat, setSeat] = useState(""); // "" = spectate, "0".."3" = claim
 
   const busy = room.room.status === "connecting" || room.room.status === "joining";
+  const [lastRoomEcho] = useState(() => safeReadLastRoom());
   const joined = room.room.status === "playing";
   const codeOk = ROOM_CODE_RE.test(code);
   const canJoin = !busy && !joined && codeOk;
 
   const submit = (): void => {
     if (!canJoin) return;
+    // Remember the join so a browser refresh can rejoin the same seat
+    // (App reads this on mount + the seatToken stored by wire/adapter.ts).
+    safeWriteLastRoom({ url, roomCode: code, name: name.trim(), seat: seat === "" ? null : Number(seat) });
     room.connect({
       roomCode: code,
       url, // the field is real: useRoom opens to THIS url (I-7)
@@ -116,6 +138,12 @@ export function JoinPanel({ room }: JoinPanelProps): React.JSX.Element {
           {busy ? "Joining…" : "Join"}
         </button>
       )}
+
+      {joined && lastRoomEcho !== null ? (
+        <p className="hint" id="join-lastroom">
+          lastRoom saved: {lastRoomEcho.roomCode} seat {lastRoomEcho.seat === null ? "spectate" : lastRoomEcho.seat}
+        </p>
+      ) : null}
 
       {code.length > 0 && !codeOk ? (
         <p className="hint">Room code is 6 letters/digits.</p>
