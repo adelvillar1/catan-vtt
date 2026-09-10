@@ -127,6 +127,16 @@ const READ = `(() => {
     hudTitle: txt("#hud-title"),
     yours: document.querySelector("#hud-title")?.getAttribute("data-yours") === "1",
     vp: txt("#hud-vp"),
+    // Own hand, straight off the rail chips (data-count is server-derived).
+    // Needed by the NEEDS-DRIVEN trade chooser — a greedy "first shipped 4:1"
+    // ping-pongs wood<->brick and never assembles a build hand (run #7).
+    hand: (() => {
+      const h = {};
+      for (const c of document.querySelectorAll("#rail-chips .chip")) {
+        h[c.getAttribute("data-resource")] = Number(c.getAttribute("data-count") || "0");
+      }
+      return h;
+    })(),
     moves,
     modal: document.querySelector("#discard-modal") !== null,
     modalTitle: txt("#discard-modal h2"),
@@ -392,17 +402,32 @@ async function step(s) {
   }
 
   // 2. the greedy build ladder (DOM buttons, opLabel text).
+  //
+  // ORDER IS THE GOLDEN-BOT PRIORITY, VERBATIM (server.test.ts:1185-1195 /
+  // cli.ts:48-68 — the priority that wins 6/6 seeded games): `roll` comes
+  // BEFORE every build and every trade. That is not cosmetic, and run #6
+  // proved it the hard way: with trades ranked above roll, a hand holding 4+
+  // cards always has a legal 4:1, so the driver traded every turn and NEVER
+  // rolled — no production at all, each 4:1 burning 3 cards from a closed
+  // 95-card economy. Result: seq 1103 in 24.4 min vs run #5's 7360 in 15.
+  // Catan's turn is production-then-action, so the ladder is too.
+  //
+  // Trades are still server-SHIPPED legalMoves clicked as ordinary
+  // #moves-list buttons (the kernel alone decides legality); the demo stays
+  // all-clicks. RUN5-STARVATION.md has the full diagnosis.
   const ladder = [
     ["Claim victory"],
+    ["Roll dice"],
     ["Upgrade to city"],
     ["Build settlement"],
     ["Build road"],
     ["Buy development card"],
-    ["Roll dice"],
     ["Play knight"],
+    ["Play monopoly"],
     ["Play road building"],
     ["Play year of plenty"],
-    ["Play monopoly"],
+    ["Trade with bank"],
+    ["Trade via port"],
   ];
   for (const label of ladder) {
     if (!has(label[0])) continue;
@@ -412,6 +437,68 @@ async function step(s) {
       log(`s${s} ${r.label} ${r.detail} -> seq ${r.seq}`);
       return r.label;
     }
+  }
+
+  // 2b. NEEDS-DRIVEN MARITIME TRADE (run #8). A greedy "click the first
+  // shipped 4:1" ping-pongs wood<->brick forever — run #7 did exactly that
+  // (228 trades, 151 of them wood->brick, ZERO settlements/cities/dev cards)
+  // because every 4:1 BURNS THREE CARDS from a closed 95-card economy. So:
+  // pick the cheapest reachable BUILD TARGET first, then take ONLY a trade
+  // that (a) hands us a card that target still lacks and (b) pays with our
+  // single most abundant card, which the target does not need. Otherwise
+  // hoard (the next roll is free; a 4:1 is not).
+  //
+  // Costs are the real ones (skill + kernel COST_*): road 1 wood+1 brick,
+  // settlement +1 wheat +1 wool, city 2 wheat +3 ore, dev 1 ore+1 wool+1
+  // wheat. The op itself is still a SERVER-SHIPPED legalMove clicked as an
+  // ordinary #moves-list button — the kernel decides legality, we only
+  // choose WHICH shipped button to press.
+  {
+    const HAND = snap.hand ?? {};
+    const n = (r) => HAND[r] ?? 0;
+    const TARGETS = [
+      { label: "Build settlement", cost: { wood: 1, brick: 1, wheat: 1, wool: 1 } },
+      { label: "Upgrade to city", cost: { wheat: 2, ore: 3 } },
+      { label: "Build road", cost: { wood: 1, brick: 1 } },
+      { label: "Buy development card", cost: { ore: 1, wool: 1, wheat: 1 } },
+    ];
+    // Chase the NEXT target in ladder order, NOT one that is already legal.
+    // (Gating on `has(t.label)` was run #8's bug: a settlement you can
+    // already afford is built in step 2, so the only targets left are ones
+    // you can never afford — and the chooser starves to death holding cards
+    // it refuses to spend. You must be able to trade TOWARD a build.)
+    const t = TARGETS[0];
+    const lacks = Object.keys(t.cost).filter((r) => n(r) < t.cost[r]);
+    if (lacks.length > 0) {
+      const want = lacks[0];
+      // Pay with our most abundant card that this target does NOT need.
+      const spendable = Object.keys(HAND).filter(
+        (r) => n(r) >= 4 && (t.cost[r] ?? 0) === 0 && n(r) > (t.cost[r] ?? 0),
+      );
+      if (spendable.length > 0) {
+        const give = spendable.sort((a, b) => n(b) - n(a))[0];
+        const hit = snap.moves.findIndex(
+          (mv) =>
+            (mv.label === "Trade with bank" || mv.label === "Trade via port") &&
+            !mv.disabled &&
+            (mv.detail ?? "").includes(`give ${give}`) &&
+            (mv.detail ?? "").includes(`get ${want}`),
+        );
+        if (hit !== -1) {
+          const before = snap.seq;
+          await page.locator("#moves-list li button").nth(hit).click({ timeout: 4000 });
+          const after = await waitSeqAbove(page, before);
+          if (after > before) {
+            seats[s].ops++;
+            log(`s${s} trade ${give}->${want} (for ${t.label}) -> seq ${after}`);
+            return "trade-needs";
+          }
+        }
+      }
+    }
+    // No useful trade: FALL THROUGH to the robber/dev/endTurn policy below.
+    // (Run #8 ended the turn here instead — 199 rolls / 199 endTurns and no
+    // builds at all, because "I can't profitably trade" is not "I am done".)
   }
 
   // 3. the robber: a HEX GHOST on the island (plan: click centre).

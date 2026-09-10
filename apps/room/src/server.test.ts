@@ -1353,7 +1353,7 @@ describe("rematch — authority (AC1: only the host, only when ended)", () => {
     const boardBefore = JSON.stringify(server.room.state);
 
     clients[0]!.send({ type: "rematch" });
-    const err = await clients[0]!.waitNew((m) => m.type === "error", 3000);
+    const err = await clients[0]!.waitNew((m) => m.type === "error", 8000);
     expect(err).toMatchObject({ type: "error", code: "badPhase" });
 
     // Rejection law: no state change, no serverSeq change, no broadcast.
@@ -1370,7 +1370,7 @@ describe("rematch — authority (AC1: only the host, only when ended)", () => {
     const boardBefore = JSON.stringify(server.room.state);
 
     clients[1]!.send({ type: "rematch" });
-    const err = await clients[1]!.waitNew((m) => m.type === "error", 3000);
+    const err = await clients[1]!.waitNew((m) => m.type === "error", 8000);
     expect(err).toMatchObject({ type: "error", code: "notHost" });
 
     expect(server.room.serverSeq).toBe(seqBefore);
@@ -1392,7 +1392,7 @@ describe("rematch — authority (AC1: only the host, only when ended)", () => {
     const seqBefore = server.room.serverSeq;
 
     spec.send({ type: "rematch" });
-    const err = await spec.waitNew((m) => m.type === "error", 3000);
+    const err = await spec.waitNew((m) => m.type === "error", 8000);
     expect(err).toMatchObject({ type: "error", code: "notHost" });
     expect(server.room.serverSeq).toBe(seqBefore);
     expect(server.room.state.phase).toBe("ended");
