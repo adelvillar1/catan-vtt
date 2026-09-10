@@ -34,6 +34,41 @@ export const RESOURCE_COLORS: Record<Resource, string> = {
   ore: "#8a8f98",
 };
 
+/**
+ * The discard chip's click rule — ONE step of the picker, pure.
+ *
+ * `picked` is a MULTSET (it can hold the same resource twice); the modal's
+ * chips click-add: a click takes one more of that resource while the hand
+ * still has one AND the owed count is not reached. Past either ceiling, the
+ * click hands one back (the last picked copy of that resource) — so repeated
+ * clicking OSCILLATES up and down, and "Clear" is the panic button.
+ *
+ * Why this replaced the original toggle (the P3(c) AC2 bug): a set-toggle
+ * ("click once picks, click again unpicks") can never pick two of the same
+ * card, and a hand of only two resource types owing 4 discards then has NO
+ * reachable selection at all — submit stays disabled forever and the player
+ * is deadlocked in a modal they cannot leave. The kernel's legalMoves ship
+ * `discardSeven` multisets like {ore:4}; the UI must be able to express them.
+ *
+ * Returns the SAME array reference when nothing changes (React bails the
+ * re-render) and never mutates `prev`.
+ */
+export function toggleDiscardPick(
+  prev: readonly Resource[],
+  r: Resource,
+  hand: Partial<Record<Resource, number>> | null,
+  count: number,
+): Resource[] {
+  const held = hand === null ? 0 : hand[r] ?? 0;
+  const selected = prev.filter((c) => c === r).length;
+  if (prev.length < count && selected < held) return [...prev, r]; // add one
+  if (selected > 0) {
+    const idx = prev.lastIndexOf(r);
+    return prev.filter((_, i) => i !== idx); // hand one back
+  }
+  return prev as Resource[]; // nothing to add, nothing to return
+}
+
 // ---------------------------------------------------------------------------
 // Move picking — the ONLY way the UI "knows" what is legal
 // ---------------------------------------------------------------------------

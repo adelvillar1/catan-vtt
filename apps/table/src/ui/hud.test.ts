@@ -6,7 +6,7 @@
  * reachable state; P1's vacuous-fixture lesson is a hard rule here.
  */
 import { describe, expect, it } from "vitest";
-import type { GameState } from "@catan-vtt/shared";
+import type { GameState, Resource } from "@catan-vtt/shared";
 import {
   devChips,
   handChips,
@@ -14,6 +14,7 @@ import {
   pendingTradeView,
   pickMove,
   playerName,
+  toggleDiscardPick,
   turnBanner,
   visiblePoints,
 } from "./hudLogic.js";
@@ -119,5 +120,62 @@ describe("pendingTradeView + pickMove", () => {
 
   it("no pending trade → null view (no phantom banner)", () => {
     expect(pendingTradeView(afterRoll(), 0)).toBeNull();
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// toggleDiscardPick — the discard modal's chip rule (PURE — P3(c) AC2 fix)
+// ---------------------------------------------------------------------------
+
+describe("toggleDiscardPick", () => {
+  const HAND = { wood: 2, brick: 0, wool: 0, wheat: 0, ore: 6 } as const;
+  const hand = (): Partial<Record<Resource, number>> => ({ ...HAND });
+
+  it("clicks ADD one of the resource each time (multiset, not set)", () => {
+    let p = toggleDiscardPick([], "ore", hand(), 4);
+    expect(p).toEqual(["ore"]);
+    p = toggleDiscardPick(p, "ore", hand(), 4); // the OLD toggle REMOVED here
+    expect(p).toEqual(["ore", "ore"]);
+    p = toggleDiscardPick(p, "ore", hand(), 4);
+    p = toggleDiscardPick(p, "ore", hand(), 4);
+    expect(p).toEqual(["ore", "ore", "ore", "ore"]); // the AC2-reachable path
+  });
+
+  it("the AC2 deadlock case is solvable: {wood:2, ore:6} owing 4 reaches the cap", () => {
+    let p: Resource[] = [];
+    for (let i = 0; i < 4; i++) p = toggleDiscardPick(p, "ore", hand(), 4);
+    expect(p.length).toBe(4);
+  });
+
+  it("stops at the owed count; the same click HANDS BACK, other chips are identity", () => {
+    let p = toggleDiscardPick([], "ore", hand(), 2);
+    p = toggleDiscardPick(p, "ore", hand(), 2);
+    expect(p).toEqual(["ore", "ore"]);
+    expect(toggleDiscardPick(p, "ore", hand(), 2)).toEqual(["ore"]); // over cap -> hand back
+    // capped (length === count) and a click on a resource with NOTHING
+    // picked: cannot add, nothing to return -> SAME reference (React bails).
+    expect(toggleDiscardPick(p, "wood", hand(), 2)).toBe(p);
+  });
+
+  it("never exceeds the hand: a third wood click on a 2-wood hand is a no-op then returns", () => {
+    let p = toggleDiscardPick([], "wood", hand(), 9);
+    p = toggleDiscardPick(p, "wood", hand(), 9);
+    expect(p).toEqual(["wood", "wood"]);
+    const third = toggleDiscardPick(p, "wood", hand(), 9); // cap is the HAND now
+    expect(third).toEqual(["wood"]); // hands one back, never 3 woods
+    expect(toggleDiscardPick(third, "brick", hand(), 9)).toBe(third); // same ref: nothing held, nothing picked
+  });
+
+  it("a null/absent hand cannot pick, and a zero-pick zero-hold click is identity", () => {
+    expect(toggleDiscardPick([], "ore", null, 4)).toEqual([]); // null hand holds nothing
+    const prev: Resource[] = ["ore"];
+    // wheat: held 0, picked 0 -> cannot add, nothing to hand back -> SAME ref
+    expect(toggleDiscardPick(prev, "wheat", hand(), 4)).toBe(prev);
+  });
+
+  it("hands back the LAST picked copy (order-stable for the shipped-key lookup)", () => {
+    const p = ["wood", "ore", "wood"] as Resource[];
+    expect(toggleDiscardPick(p, "wood", hand(), 4)).toEqual(["wood", "ore"]);
   });
 });

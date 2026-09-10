@@ -32,6 +32,7 @@ import { useMemo, useState } from "react";
 import type { GameState, Op, Resource } from "@catan-vtt/shared"; // type-only
 import { pickAll } from "./hudLogic.js";
 import { RESOURCES, RESOURCE_ABBR } from "./hudLogic.js";
+import { toggleDiscardPick } from "./hudLogic.js";
 import { discardCardsKey } from "../scene/targetSet.js";
 
 export interface DiscardModalProps {
@@ -92,14 +93,13 @@ export function DiscardModal({
   const match = full ? byKey.get(discardCardsKey(picked)) : undefined;
   const canSend = match !== undefined;
 
+  // Click rule lives in hudLogic.toggleDiscardPick (PURE, node-tested):
+  // picked is a MULTISET — clicks accumulate up to the hand/owed ceilings and
+  // then hand cards back. The P3(c) AC2 demo caught the previous set-toggle
+  // deadlocking a {wood:2, ore:6} hand owing 4: no reachable selection could
+  // ever reach count, so submit could never enable.
   const toggle = (r: Resource): void => {
-    setPicked((prev) => {
-      const idx = prev.indexOf(r);
-      if (idx !== -1) return prev.filter((_, i) => i !== idx); // deselect that one
-      if (prev.length >= count) return prev; // at the cap — ignore
-      if (remainingOf(r) <= 0) return prev; // nothing left of that resource
-      return [...prev, r];
-    });
+    setPicked((prev) => toggleDiscardPick(prev, r, hand, count));
   };
 
   return (
