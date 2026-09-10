@@ -50,7 +50,8 @@ not a client secret — ROOM_SEED stays the parent's dial).
 
 **Evidence artifacts (docs/e2e-review/m3-p3c/):** 01-setup-ghosts.png, 02-midgame.png,
 03-discard-modal.png (THE deferred pixel), 04-robber.png, 05-victory.png (real winner),
-06-rematch-fresh.png (banner gone, setup phase, seq jumped), fullgame.log (seq timeline,
+06-rematch-fresh.png (banner gone, setup phase, seq UNCHANGED — a rematch is
+not an op, see P3(b)), fullgame.log (seq timeline,
 per-seat op counts, rejected count — MUST be 0 for PASS), game-statistics line (total ops,
 minutes). README.md states AC2 and maps each screenshot to the claim.
 
