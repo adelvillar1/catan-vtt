@@ -169,6 +169,9 @@ const CHIPS = `(() => [...document.querySelectorAll("#discard-modal .chip-btn")]
 
 const TARGETS = `(() => (typeof window.__catanTargets === "function" ? window.__catanTargets() : []))()`;
 
+/** Rail chip abbreviations, matching hudLogic.RESOURCE_ABBR (TradePanel labels). */
+const ABBR = { wood: "WOD", brick: "BRK", wool: "WOL", wheat: "WHT", ore: "ORE" };
+
 const seqOf = async (p) => (await p.evaluate(READ)).seq;
 const read = (p) => p.evaluate(READ);
 
@@ -266,8 +269,16 @@ const shot = async (name, seat) => {
 async function clickMoveByLabel(page, labels) {
   const snap = await read(page);
   for (const label of labels) {
-    const idx = snap.moves.findIndex((m) => m.label === label && !m.disabled);
-    if (idx === -1) continue;
+    // Uniform-random among the enabled buttons carrying this label — the
+    // golden bot's within-bucket rule (goldenReplay.ts:75-79). Always taking
+    // the first one gives every seat the same deterministic (and likely
+    // worst) road/settlement choice every turn.
+    const hits = [];
+    snap.moves.forEach((m, i) => {
+      if (m.label === label && !m.disabled) hits.push(i);
+    });
+    if (hits.length === 0) continue;
+    const idx = hits[Math.floor(Math.random() * hits.length)];
     const before = snap.seq;
     await page.locator("#moves-list li button").nth(idx).click({ timeout: 4000 });
     const after = await waitSeqAbove(page, before);
@@ -293,7 +304,12 @@ async function clickGhost(page, kind, pick) {
   return { ok: after > before, kind: t.kind, id: t.id, seq: after };
 }
 
-const firstGhost = (list) => list[0];
+// The golden bot picks a UNIFORM RANDOM member of each op bucket
+// (goldenReplay.ts:75-79) — and it wins 6/6 in ~600 ops. An always-first
+// driver gives all three tabs the same (probably terrible) opening
+// placements, which is the most likely cause of the chronically empty hands
+// this demo keeps measuring (dev deck 25 untouched after 1,562 ops).
+const firstGhost = (list) => list[Math.floor(Math.random() * list.length)];
 const centerGhost = (list) => {
   // deterministic: the hex ghost nearest the viewport centre
   let best = list[0];
@@ -361,6 +377,105 @@ async function doDiscard(s) {
     await page.locator("#discard-modal .chip-btn").nth(idx).click({ timeout: 4000 });
     await page.waitForTimeout(40);
   }
+}
+
+// ---------------------------------------------------------------------------
+// domestic trade helpers (run #10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Off-turn: if this seat is the offeree of a pending offer AND can actually
+ * pay what the offer wants, accept it. Returns false otherwise.
+ *
+ * The payability check is the whole point: the kernel ships `tradeAccept`
+ * unconditionally to the offeree (turn.ts:1446-1451), so a blind accept of an
+ * unaffordable offer is a REJECTION — and AC2 demands zero rejections. The
+ * pending offer is public (redact.ts) and our own hand is on #rail-chips, so
+ * this is exactly what a human at the table can see.
+ */
+async function maybeAcceptTrade(s) {
+  const page = pageOf(s);
+  const info = await page.evaluate(`(() => {
+    const btn = [...document.querySelectorAll("#moves-list li button")].find(
+      (b) => (b.textContent || "").includes("Accept trade"),
+    );
+    const hud = document.querySelector("#hud-panel");
+    const txt = hud === null ? "" : (hud.textContent || "");
+    const m = txt.match(/gives\\s+([a-z, ]+?)\\s+→\\s+wants\\s+([a-z, ]+?)(?:\\s|$)/);
+    const hand = {};
+    for (const c of document.querySelectorAll("#rail-chips .chip")) {
+      hand[c.getAttribute("data-resource")] = Number(c.getAttribute("data-count") || "0");
+    }
+    return { has: btn !== undefined, want: m === null ? null : m[2].split(",").map((x) => x.trim()).filter(Boolean), hand };
+  })()`);
+  if (info.has !== true || info.want === null) return false;
+  // Can we pay every card the offer wants?
+  const need = {};
+  for (const r of info.want) need[r] = (need[r] ?? 0) + 1;
+  const canPay = Object.keys(need).every((r) => (info.hand[r] ?? 0) >= need[r]);
+  if (!canPay) {
+    // Decline politely — the offeror is waiting on an answer either way.
+    const idx = await page.evaluate(
+      `(() => [...document.querySelectorAll("#moves-list li button")].findIndex((b) =>
+        (b.textContent || "").includes("Reject trade")))()`,
+    );
+    if (idx >= 0) {
+      const before = await seqOf(page);
+      await page.locator("#moves-list li button").nth(idx).click({ timeout: 4000 });
+      const after = await waitSeqAbove(page, before);
+      if (after > before) {
+        seats[s].ops++;
+        log(`s${s} reject trade (cannot pay ${info.want.join("+")}) -> seq ${after}`);
+        return true;
+      }
+    }
+    return false;
+  }
+  const before = await seqOf(page);
+  await page
+    .locator("#moves-list li button")
+    .filter({ hasText: "Accept trade" })
+    .first()
+    .click({ timeout: 4000 });
+  const after = await waitSeqAbove(page, before);
+  if (after > before) {
+    seats[s].ops++;
+    log(`s${s} ACCEPT trade (paid ${info.want.join("+")}) -> seq ${after}`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * On-turn: compose and send one domestic offer through #trade-panel —
+ * give `give` (one card) for `want` (one card) from any other seat.
+ * The kernel ships no tradeOffer (UI-composed by design), so this is the only
+ * way to exercise that surface; whatever we send, the server judges.
+ */
+async function offerTrade(s, give, want) {
+  const page = pageOf(s);
+  try {
+    await page.click("#trade-panel button:has-text('Opponent')", { timeout: 3000 });
+    await page.selectOption("#trade-give", { label: `${ABBR[give]} · ${give}` }).catch(async () => {
+      await page.selectOption("#trade-give", give);
+    });
+    await page.selectOption("#trade-want", { label: `${ABBR[want]} · ${want}` }).catch(async () => {
+      await page.selectOption("#trade-want", want);
+    });
+    const btn = page.locator("#trade-submit");
+    if (await btn.isDisabled()) return false;
+    const before = await seqOf(page);
+    await btn.click({ timeout: 4000 });
+    const after = await waitSeqAbove(page, before);
+    if (after > before) {
+      seats[s].ops++;
+      log(`s${s} OFFER ${give}->${want} -> seq ${after}`);
+      return true;
+    }
+  } catch {
+    return false; // panel not offering right now — not an error, just not legal
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +614,58 @@ async function step(s) {
     // No useful trade: FALL THROUGH to the robber/dev/endTurn policy below.
     // (Run #8 ended the turn here instead — 199 rolls / 199 endTurns and no
     // builds at all, because "I can't profitably trade" is not "I am done".)
+  }
+
+  // 2c. DOMESTIC TRADE (run #10) — the only LOSSLESS card movement in Catan,
+  // and the last unexercised UI surface. Maritime 4:1 burns three cards per
+  // use out of a closed 95-card economy that run #9 measured as unable to
+  // ever reach 4-of-a-kind (375 rolls, 0 trades, 0 builds).
+  //
+  // Two halves, both real DOM:
+  //   OFFER  (my turn):  #trade-panel "Opponent" tab -> give/want/with ->
+  //                      #trade-submit. The op is UI-composed (the kernel
+  //                      deliberately ships no tradeOffer — hudLogic:311) and
+  //                      the SERVER rejects whatever it rejects, so we offer
+  //                      a surplus card for the card our next build lacks.
+  //   ACCEPT (off-turn): pendingTrade is PUBLIC (redact.ts), so the offeree
+  //                      sees the offer and checks its OWN rail before
+  //                      pressing "Accept trade" — never a blind accept,
+  //                      which is what would break the 0-rejections law
+  //                      (tradeAccept ships unconditionally, turn.ts:1446).
+  {
+    // --- ACCEPT first: it is off-turn, so it must not wait behind our turn ---
+    if (await maybeAcceptTrade(s)) return "acceptTrade";
+
+    // --- OFFER: only on our own turn, only with a real surplus ---
+    const HAND = snap.hand ?? {};
+    // The FIRST build target we cannot yet afford (ladder order).
+    const target = [
+      { cost: { wood: 1, brick: 1, wheat: 1, wool: 1 } },
+      { cost: { wheat: 2, ore: 3 } },
+      { cost: { wood: 1, brick: 1 } },
+      { cost: { ore: 1, wool: 1, wheat: 1 } },
+    ].find((t) => Object.keys(t.cost).some((r) => (HAND[r] ?? 0) < t.cost[r]));
+    if (target !== undefined && snap.yours) {
+      // AT MOST ONE OFFER PER TURN (run #10's spinning bug: the driver
+      // re-offered the identical ore->brick 459 times, got rejected 459
+      // times, and never ended its turn — seq crawled to 958 in 137s). Track
+      // the turn by the seq at which we offered, and rotate the wanted card
+      // so a repeat offer asks for something the partner may actually hold.
+      const turnKey = snap.seq;
+      const lastOffer = seats[s].lastOfferSeq ?? -1;
+      if (lastOffer !== turnKey) {
+        const want = Object.keys(target.cost).find((r) => (HAND[r] ?? 0) < target.cost[r]);
+        // A card we hold >=2 of AND the target does not need = a real surplus.
+        const give = Object.keys(HAND).find(
+          (r) => (HAND[r] ?? 0) >= 2 && (target.cost[r] ?? 0) === 0 && r !== want,
+        );
+        if (want !== undefined && give !== undefined) {
+          seats[s].lastOfferSeq = turnKey;
+          const ok = await offerTrade(s, give, want);
+          if (ok) return "offerTrade";
+        }
+      }
+    }
   }
 
   // 3. the robber: a HEX GHOST on the island (plan: click centre).
