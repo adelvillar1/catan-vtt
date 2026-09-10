@@ -1418,6 +1418,54 @@ describe("rematch — authority (AC1: only the host, only when ended)", () => {
     expect(server.room.serverSeq).toBe(seqBefore);
     expect(server.room.state.phase).toBe("ended"); // no rematch happened
   });
+
+  it("a SUPERSEDED host socket's rematch is notHost; the new owner's still works (owner guard)", async () => {
+    // P3(b) review m-5: the guard at server.ts (#seatOwner.get(0) !== conn.ws)
+    // is the ONLY thing standing between two live sockets that both believe
+    // they are seat 0 (token rejoin fences a live victim by design). Pin it.
+    const { server, port, roomCode, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    expect(server.room.state.phase).toBe("ended");
+    const w0 = clients[0]!.frames.find((m) => m.type === "welcome" && m.seat === 0);
+    if (!w0 || w0.type !== "welcome" || typeof w0.seatToken !== "string") {
+      throw new Error("no seat-0 token captured");
+    }
+    // A NEW socket rejoins with the token — ownership re-points immediately;
+    // the old socket stays open and still believes it is seat 0.
+    const fresh = await openClient(port);
+    fresh.send({ type: "join", roomCode, seatToken: w0.seatToken });
+    expect(await fresh.next("welcome", 8000)).toMatchObject({ type: "welcome", seat: 0 });
+    // The superseded socket's rematch must be refused — and refused WITHOUT
+    // restarting the room.
+    clients[0]!.send({ type: "rematch" });
+    const err = await clients[0]!.waitNew((m) => m.type === "error", 8000);
+    expect(err).toMatchObject({ type: "error", code: "notHost" });
+    expect(server.room.state.phase).toBe("ended");
+    expect(server.room.winner()).not.toBeNull();
+    // The NEW owner can rematch for real (the guard refuses, it does not
+    // poison the seat).
+    fresh.send({ type: "rematch" });
+    const proj = await fresh.waitNew((m) => m.type === "projection", 8000);
+    if (proj.type !== "projection") throw new Error("unreachable");
+    expect(proj.state.phase).toBe("setup");
+  });
+
+  it("a second rematch while game 2 is in setup is badPhase (no double-fresh)", async () => {
+    // Review m-5: back-to-back clicks across the phase boundary must produce
+    // exactly one fresh game + one honest refusal, never two restarts.
+    const { server, clients } = await bootSeated();
+    await playToEnd(clients, server);
+    clients[0]!.send({ type: "rematch" });
+    await clients[0]!.waitNew((m) => m.type === "projection", 8000);
+    expect(server.room.state.phase).toBe("setup");
+    const seqBefore = server.room.serverSeq;
+    const boardBefore = JSON.stringify(server.room.state);
+    clients[0]!.send({ type: "rematch" });
+    const err = await clients[0]!.waitNew((m) => m.type === "error", 8000);
+    expect(err).toMatchObject({ type: "error", code: "badPhase" });
+    expect(server.room.serverSeq).toBe(seqBefore);
+    expect(JSON.stringify(server.room.state)).toBe(boardBefore);
+  });
 });
 
 describe("rematch — the host's happy path", () => {

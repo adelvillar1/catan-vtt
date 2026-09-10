@@ -113,6 +113,36 @@ describe("routeFrame — server frame routing", () => {
     expect(s1.error).toEqual({ code: "inSeatTaken", message: "seat 0 is taken" });
   });
 
+  it("a transient refusal note is cleared by the next projection; a real connection error is not (P3b review I-1)", () => {
+    const proj = ServerMsgSchema.parse({
+      type: "projection",
+      state,
+      legalMoves: [],
+      serverSeq: 7,
+    });
+    const live: RoomState = { ...initialRoomState(), status: "playing", serverSeq: 6 };
+    const mk = (code: string) =>
+      routeFrame(live, ServerMsgSchema.parse({ type: "error", code, message: "x" }));
+    // notHost / badPhase are ONE-REQUEST answers: the table keeps running
+    // (status stays "playing"), so a refusal note must not outlive the next
+    // frame — the double-click rematch race otherwise displays a false
+    // failure for an entire game (adapter.ts projection case).
+    for (const code of ["notHost", "badPhase"]) {
+      const refused = mk(code);
+      expect(refused.status).toBe("playing");
+      expect(refused.error?.code).toBe(code); // note IS set — just not sticky
+      const after = routeFrame(refused, proj);
+      expect(after.error).toBeNull();
+      expect(after.serverSeq).toBe(7); // the projection itself applied normally
+    }
+    // A real connection error is NOT transient: only welcome/connect clears it.
+    const dead = mk("badToken");
+    expect(dead.status).toBe("error"); // review I-2: non-transient still forces error status
+    expect(routeFrame(dead, proj).error?.code).toBe("badToken");
+    // And with no error set, a projection is a no-op for the field.
+    expect(routeFrame(routeFrame(initialRoomState(), proj), proj).error).toBeNull();
+  });
+
   it("pong records t", () => {
     const s1 = routeFrame(initialRoomState(), ServerMsgSchema.parse({ type: "pong", t: 99 }));
     expect(s1.lastPong).toBe(99);

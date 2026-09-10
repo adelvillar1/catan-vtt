@@ -266,7 +266,7 @@ export class RoomServer {
         this.#onRematch(conn);
         return;
       default: {
-        // Unreachable while ClientMsgSchema is exactly {join, op, ping}.
+        // Unreachable while ClientMsgSchema is {join, op, ping, rematch}.
         // Loud so a union extension can never silently drop a message.
         const _exhaustive: never = msg;
         throw new Error(`unhandled ClientMsg type: ${String(_exhaustive)}`);

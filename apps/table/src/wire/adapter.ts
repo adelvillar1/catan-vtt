@@ -102,9 +102,20 @@ export function routeFrame(prev: RoomState, msg: ServerMsg): RoomState {
       };
     }
     case "projection": {
+      // A transient REFUSAL (notHost/badPhase — review I-1) is a one-request
+      // answer, and the table keeps receiving projections THROUGH it (status
+      // stayed "playing"). If the next projection didn't clear it, the
+      // double-click rematch race would leave the host's own tab asserting
+      // "badPhase: a rematch needs a finished game" for ALL of game 2 — a
+      // false failure displayed under a correctly-running table. Any REAL
+      // connection error (badToken/roomNotFound/socket) is NOT transient and
+      // only a fresh welcome or connect clears it, exactly as before.
+      const transient =
+        prev.error !== null && (prev.error.code === "notHost" || prev.error.code === "badPhase");
       return {
         ...prev,
         status: prev.status === "connecting" || prev.status === "joining" ? "playing" : prev.status,
+        ...(transient ? { error: null } : {}),
         projection: msg.state,
         legalMoves: msg.legalMoves,
         serverSeq: msg.serverSeq,
