@@ -1,0 +1,46 @@
+name: OpenCodeReview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: AI Code Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/open-code-review'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # OCR needs real merge-base; a shallow clone fails with
+          # "Cannot find merge-base".
+          fetch-depth: 0
+
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          llm_url: ${{ secrets.OCR_LLM_URL }}
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: ${{ vars.OCR_LLM_MODEL }}
+          # 'false' selects the OpenAI-compatible protocol (Ollama Cloud / z.ai).
+          # Do NOT use '' here — the action maps an explicitly-empty string to
+          # Anthropic, which then rejects llm_reasoning_effort.
+          llm_use_anthropic: 'false'
+          # GLM-5.x supports a steerable reasoning_effort field.
+          llm_reasoning_effort: low
+          effort: high
+          stream_progress: 'true'
