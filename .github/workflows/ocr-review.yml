@@ -10,16 +10,28 @@ permissions:
   contents: read
   pull-requests: write
 
+# One review run per PR at a time. A new push or a new /open-code-review
+# comment cancels the in-flight review instead of stacking duplicate runs
+# that waste LLM tokens and post conflicting comments.
+concurrency:
+  group: ocr-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     name: AI Code Review
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Same-repo PRs only (fork PRs get no secrets -> skip rather than fail
+    # red on stranger PRs), and the comment trigger is gated to repo
+    # collaborators so random users can't burn LLM quota on public repos.
     if: |
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
-       startsWith(github.event.comment.body, '/open-code-review'))
+       startsWith(github.event.comment.body, '/open-code-review') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
 
     steps:
       - name: Checkout repository
